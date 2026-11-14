@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo d'identité 10×15</title>
+<meta name="description" content="Photos d'identité 35×45 mm aux normes de la carte d'identité et du passeport, sur une planche 10×15 à imprimer. Tout se passe dans le navigateur.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231e3a5f'/%3E%3Crect x='8' y='5' width='16' height='22' rx='2' fill='%23dadde0'/%3E%3Ccircle cx='16' cy='13' r='4' fill='%231e3a5f'/%3E%3Cpath d='M10 25c1-4 3-6 6-6s5 2 6 6z' fill='%231e3a5f'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Photo d'identité 10×15</h1>
+    <p>6 photos 35×45 mm aux normes de la carte d'identité et du passeport, sur un tirage 10×15. Tes photos restent sur ton appareil : rien n'est envoyé.</p>
+  </div>
+  <span id="backend" class="badge" hidden></span>
+</header>
+
+<div class="avis" role="note">
+  <strong>À savoir :</strong> pour une carte d'identité ou un passeport, l'administration demande une photo
+  « réalisée par un professionnel ou dans une cabine utilisant un système agréé par le ministère de l'Intérieur »
+  (<a href="https://www.service-public.gouv.fr/particuliers/vosdroits/F10619" target="_blank" rel="noopener">service-public.fr</a>).
+  Cet outil respecte les règles techniques (format, taille du visage, fond, exposition…), mais une photo faite soi-même
+  peut être refusée en mairie. Elle convient pour les autres usages : badges, cartes de transport, licences, dossiers, CV…
+</div>
+
+<main>
+  <aside class="side">
+    <section class="card">
+      <h2><b>1</b>Planche</h2>
+      <div class="seg" id="mode" role="group" aria-label="Disposition">
+        <button data-v="identiques" class="on">6 photos identiques</button>
+        <button data-v="trio">3 personnes × 2</button>
+      </div>
+      <div id="slots" class="slots"></div>
+      <div class="row"><label for="fond">Fond</label><select id="fond"></select><span class="swatch" id="fondSw"></span></div>
+      <p class="hint">Fond uni et clair : le blanc est interdit par la norme.</p>
+    </section>
+
+    <section class="card" id="reglages" hidden>
+      <h2><b>2</b>Réglages de <span id="regNom">la photo</span></h2>
+      <div class="row"><label for="visage">Visage</label><input type="range" id="visage" min="32.5" max="35.5" step="0.1"><output id="visageV"></output></div>
+      <div class="row"><label for="dx">Gauche/droite</label><input type="range" id="dx" min="-3" max="3" step="0.1"><output id="dxV"></output></div>
+      <div class="row"><label for="dy">Haut/bas</label><input type="range" id="dy" min="-2" max="2" step="0.1"><output id="dyV"></output></div>
+      <hr>
+      <div class="row"><label for="exposition">Luminosité</label><input type="range" id="exposition" min="-1" max="1" step="0.02"><output id="expositionV"></output></div>
+      <div class="row"><label for="contraste">Contraste</label><input type="range" id="contraste" min="-0.5" max="0.5" step="0.02"><output id="contrasteV"></output></div>
+      <div class="row"><label for="ombres">Ombres</label><input type="range" id="ombres" min="0" max="1" step="0.02"><output id="ombresV"></output></div>
+      <div class="row"><label for="temperature">Teinte</label><input type="range" id="temperature" min="-1" max="1" step="0.02"><output id="temperatureV"></output></div>
+      <div class="row"><label for="saturation">Couleurs</label><input type="range" id="saturation" min="-0.5" max="0.5" step="0.02"><output id="saturationV"></output></div>
+      <div class="actions">
+        <button class="btn ghost" id="auto">Réglages automatiques</button>
+        <button class="btn ghost" id="raz">Tout remettre à zéro</button>
+      </div>
+    </section>
+  </aside>
+
+  <section class="work">
+    <div class="card editor" id="editor" hidden>
+      <div class="ed-pic">
+        <canvas id="apercu" width="350" height="450" aria-label="Aperçu de la photo 35×45"></canvas>
+        <label class="check small"><input type="checkbox" id="guides" checked> Afficher les repères de la norme</label>
+      </div>
+      <div class="ed-checks">
+        <h3>Contrôle automatique</h3>
+        <ul id="checks" class="checks"></ul>
+        <h3>À vérifier toi-même</h3>
+        <ul id="manuel" class="checks manuel"></ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="bar-top">
+        <h2 class="inline"><b>3</b>Planche 10×15</h2>
+        <span id="status" role="status" aria-live="polite"></span>
+      </div>
+      <div class="progress" id="bar" role="progressbar" aria-label="Progression" aria-valuemin="0" aria-valuemax="100" hidden><i id="barI"></i></div>
+      <div class="sheet-wrap"><canvas id="planche" width="1800" height="1200" aria-label="Aperçu de la planche"></canvas>
+        <div class="empty" id="empty">Ajoute une photo pour commencer.</div>
+      </div>
+      <div class="exports">
+        <button class="btn" id="dlPlanche" disabled>Télécharger la planche 10×15</button>
+        <button class="btn ghost" id="dlPlancheHD" disabled>Planche haute définition (600 dpi)</button>
+        <button class="btn ghost" id="dlPhoto" disabled>Photo seule 35×45</button>
+      </div>
+      <p class="hint" id="conformite"></p>
+      <details class="hint">
+        <summary>Comment imprimer</summary>
+        <ul>
+          <li>Commande un tirage <strong>10×15 « sans recadrage »</strong> (ou « taille réelle », « bords blancs ») en laboratoire, borne photo ou en ligne.</li>
+          <li>À la maison : papier photo 10×15, échelle <strong>100 %</strong> (désactive « ajuster à la page »).</li>
+          <li>Vérifie à la règle la barre de <strong>10 mm</strong> imprimée à droite : si elle ne mesure pas 10 mm, l'impression a été redimensionnée.</li>
+          <li>Découpe en suivant les petits repères aux coins des photos.</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="alert"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

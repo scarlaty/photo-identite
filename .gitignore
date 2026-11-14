@@ -1,0 +1,10 @@
+node_modules/
+.playwright-mcp/
+__pycache__/
+*.pyc
+# Ne jamais publier de photos de personnes
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.zip

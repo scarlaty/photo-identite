@@ -1,0 +1,10 @@
+{
+  "name": "photo-identite",
+  "private": true,
+  "type": "module",
+  "description": "Photos d'identité 35×45 conformes (CNI, passeport) sur planche 10×15, 100 % navigateur.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "npx --yes http-server@14.1.1 -c-1 -p 8080 ."
+  }
+}
