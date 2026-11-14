@@ -4,7 +4,9 @@ Outil web qui transforme une photo de portrait en **photos d'identité 35×45 mm
 la carte nationale d'identité et du passeport français, disposées sur une **planche 10×15** de
 6 photos à faire tirer (6 identiques, ou 3 personnes × 2).
 
-Tout se passe dans le navigateur : les photos ne quittent jamais l'appareil.
+Tout se passe dans le navigateur : les photos ne quittent jamais l'appareil. Les moteurs (MediaPipe,
+onnxruntime-web) sont chargés depuis le CDN jsDelivr en version figée, et le modèle de détourage
+depuis Hugging Face.
 
 > **Limite administrative.** Pour une carte d'identité ou un passeport, l'administration demande
 > une photo « réalisée par un professionnel ou dans une cabine utilisant un système agréé par le

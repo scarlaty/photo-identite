@@ -8,7 +8,7 @@ const MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/f
 let detP = null;
 function detecteur() {
   if (!detP) {
-    detP = (async () => {
+    const charge = (async () => {
       const { FilesetResolver, FaceLandmarker } = await import(`${LIB}/vision_bundle.mjs`);
       const fileset = await FilesetResolver.forVisionTasks(`${LIB}/wasm`);
       return FaceLandmarker.createFromOptions(fileset, {
@@ -19,6 +19,9 @@ function detecteur() {
         minFaceDetectionConfidence: 0.5,
       });
     })();
+    let t = 0;
+    const delai = new Promise((_, rej) => { t = setTimeout(() => rej(new Error('le détecteur de visage ne se charge pas (connexion ?) : réessaie')), 120_000); });
+    detP = Promise.race([charge, delai]).finally(() => clearTimeout(t));
     detP.catch(() => { detP = null; });
   }
   return detP;

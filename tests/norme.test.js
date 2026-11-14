@@ -115,3 +115,21 @@ test('sommet du crâne borné par le haut réel de la tête (crâne rasé)', () 
   close(m.craneMm, NORME.crane_haut_mm, 1e-9);
   assert.equal(borneCrane(r, null), false);
 });
+
+test('taille du visage : jamais « vert » (sommet du crâne estimé), KO hors plage', () => {
+  const { lm, W, H } = visage({ d: 700 });
+  const r = reperes(lm, W, H);
+  const t = c => controles({ nbVisages: 1, r, c }).find(x => x.id === 'taille-visage').ok;
+  assert.equal(t(cadre(r)), null);
+  assert.equal(t(cadre(r, { visageMm: 38 })), false);
+  assert.equal(t(cadre(r, { visageMm: 30 })), false);
+});
+
+test('tête coupée en haut de la photo d’origine : signalée', () => {
+  const { lm, W, H } = visage({ d: 700 });
+  const r = reperes(lm, W, H), c = cadre(r);
+  const ok = h => controles({ nbVisages: 1, r, c, hautCoupe: h }).find(x => x.id === 'tete-entiere')?.ok;
+  assert.equal(ok(true), false);
+  assert.equal(ok(false), true);
+  assert.equal(ok(undefined), undefined);
+});

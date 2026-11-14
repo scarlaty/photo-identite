@@ -27,7 +27,7 @@ function getInfer() {
     inferW = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
     inferW.onmessage = e => {
       const m = e.data;
-      if (m.type === 'progress') { if (!m.cached) { setStatus(`Téléchargement du modèle de détourage (une seule fois) : ${Math.round(m.loaded / 1e6)} / ${Math.round(m.total / 1e6)} Mo`); setBar(m.loaded / m.total); } }
+      if (m.type === 'progress') { pend.get('load')?.kick?.(); if (!m.cached) { setStatus(`Téléchargement du modèle de détourage (une seule fois) : ${Math.round(m.loaded / 1e6)} / ${Math.round(m.total / 1e6)} Mo`); setBar(m.loaded / m.total); } }
       else if (m.type === 'status') setStatus(m.text);
       else if (m.type === 'ready') { $('backend').hidden = false; $('backend').textContent = m.backend === 'webgpu' ? 'Accélération : WebGPU' : 'Accélération : aucune (plus lent)'; setBar(null); pend.get('load')?.resolve(); pend.delete('load'); }
       else if (m.type === 'mask') { pend.get(m.id)?.resolve(m.mask); pend.delete(m.id); }
@@ -47,7 +47,14 @@ function getMatte() {
 }
 function ensureModel() {
   if (modelP) return modelP;
-  modelP = new Promise((resolve, reject) => { pend.set('load', { resolve, reject }); getInfer().postMessage({ type: 'load', model: 'ben2' }); });
+  // Délai d'inactivité (relancé à chaque progression du téléchargement) : jamais d'attente infinie.
+  modelP = new Promise((resolve, reject) => {
+    let t = 0;
+    const kick = () => { clearTimeout(t); t = setTimeout(() => { if (pend.get('load')?.kick === kick) { pend.delete('load'); modelP = null; reject(new Error('le modèle de détourage ne se charge pas (connexion ?) : réessaie')); } }, 180_000); };
+    pend.set('load', { kick, resolve: v => { clearTimeout(t); resolve(v); }, reject: e => { clearTimeout(t); reject(e); } });
+    kick();
+    getInfer().postMessage({ type: 'load', model: 'ben2' });
+  });
   modelP.catch(() => {});
   return modelP;
 }
@@ -71,7 +78,24 @@ function scaled(src, maxSide) {
   const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, c.width, c.height);
   return c;
 }
+/** Dimensions (orientation EXIF appliquée) sans décoder les pixels. */
+function dimensions(file) {
+  const url = URL.createObjectURL(file), img = new Image();
+  return new Promise(res => {
+    img.onload = () => res([img.naturalWidth, img.naturalHeight]);
+    img.onerror = () => res(null);
+    img.src = url;
+  }).finally(() => URL.revokeObjectURL(url));
+}
 async function decode(file) {
+  // Photo de 48 Mpx : décodée directement à MAX_SIDE (≈ 190 Mo de pixels évités sur mobile).
+  // Un seul côté est imposé : l'autre suit le rapport, que le navigateur applique la réduction
+  // avant ou après l'orientation EXIF.
+  const d = await dimensions(file);
+  if (d && Math.max(...d) > MAX_SIDE) {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: Math.round(d[0] * MAX_SIDE / Math.max(...d)), resizeQuality: 'high' }); }
+    catch { /* option non prise en charge : décodage complet ci-dessous */ }
+  }
   try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); }
   catch {
     const url = URL.createObjectURL(file);
@@ -87,18 +111,23 @@ let sel = 0;
 const actifs = () => (G.mode === 'trio' ? slots : slots.slice(0, 1));
 
 function renderSlots() {
-  const box = $('slots'); box.replaceChildren();
+  const box = $('slots');
+  const focus = [...box.children].findIndex(c => c.contains(document.activeElement));
+  box.replaceChildren();
   for (const s of actifs()) {
     const el = document.createElement('div');
     el.className = 'slot' + (s.i === sel && s.status === 'ok' ? ' sel' : '');
-    el.tabIndex = 0; el.setAttribute('role', 'button');
-    el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); if (s.status === 'ok') { sel = s.i; refresh(); } } };
+    el.setAttribute('role', 'group');
     const nom = G.mode === 'trio' ? `Personne ${s.i + 1}` : 'Photo';
     const etat = { vide: 'Aucune photo', analyse: 'Analyse en cours…', ok: 'Prête — clique pour régler', err: '⚠️ ' + (s.err || 'échec') }[s.status];
     el.innerHTML = `<div class="ph">＋</div><div class="info"><strong></strong><span></span></div>
       <label class="btn ghost small">Choisir…<input type="file" accept="image/*"></label>`;
     el.querySelector('strong').textContent = nom;
     el.setAttribute('aria-label', `${nom} : ${etat}`);
+    const inp = el.querySelector('input');
+    inp.setAttribute('aria-label', `Choisir la photo — ${nom} (${etat})`);
+    // clavier : arriver sur « Choisir… » d'une personne prête la sélectionne pour les réglages
+    inp.onfocus = () => { if (s.status === 'ok' && sel !== s.i) { sel = s.i; refresh(); markSel(); } };
     el.querySelector('span').textContent = etat;
     if (s.thumb) { const c = canvas(56, 72); c.getContext('2d').drawImage(s.thumb, 0, 0, 56, 72); el.querySelector('.ph').replaceWith(c); }
     el.querySelector('input').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) charger(s, f); };
@@ -107,10 +136,14 @@ function renderSlots() {
     el.ondrop = e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) charger(s, f); };
     box.appendChild(el);
   }
+  if (focus >= 0) box.children[focus]?.querySelector('input')?.focus({ preventScroll: true });
 }
+function markSel() { actifs().forEach((s, k) => box_(k)?.classList.toggle('sel', s.i === sel && s.status === 'ok')); }
+const box_ = k => $('slots').children[k];
 
 async function charger(s, file) {
   s.status = 'analyse'; s.err = null; s.file = file; s.adj = { ...ADJ0 }; s.coches = {}; s.mesure = null; s.thumb = null;
+  s.ver = (s.ver || 0) + 1; free(s.rc?.canvas); s.rc = null;
   const tok = s.tok = {};
   sel = s.i; renderSlots(); refresh();
   try {
@@ -121,6 +154,7 @@ async function charger(s, file) {
   } catch (e) {
     if (s.tok !== tok) return;
     console.error(e); s.status = 'err'; s.err = String(e.message || e);
+    s.cut?.close?.(); s.cut = null;
   }
   setBar(null); setStatus('');
   renderSlots(); refresh();
@@ -168,18 +202,21 @@ async function analyser(s, tok) {
     const rgba = await matte(px, rw, rh, mask);
     if (s.tok !== tok) return;
     // Haut réel de la tête (chevelure comprise) : borne l'estimation du sommet du crâne
-    r.craneBorne = borneCrane(r, hautTete(rgba, rw, rh, r, reg, rk));
+    // Si la tête touche le bord haut de la photo d'origine, le vrai sommet est inconnu : pas de borne.
+    const ht = hautTete(rgba, rw, rh, r, reg, rk);
+    r.craneBorne = ht.bord ? false : borneCrane(r, ht.t);
     const cut = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba.buffer), rw, rh));
     if (s.tok !== tok) { cut.close(); return; }
     s.cut?.close?.();
-    Object.assign(s, { W, H, r, blend: f.blend, nb: f.nb, nettete: nettete_, cut, reg, basCoupe: reg.y + reg.h >= H - 1 });
+    Object.assign(s, { W, H, r, blend: f.blend, nb: f.nb, nettete: nettete_, cut, reg, hautCoupe: ht.bord });
   } finally { free(src); }
 }
 
 /**
  * Distance (px source, repère redressé) entre la ligne des yeux et le haut de la tête détourée,
  * mesurée le long de la verticale du visage (perpendiculaire à la ligne des yeux), sur une bande
- * centrale. null si introuvable.
+ * centrale. Renvoie { t (null si introuvable), bord } ; bord = la tête atteint le bord haut de
+ * la photo d'origine (sommet réel hors image).
  */
 function hautTete(rgba, w, h, r, reg, rk) {
   const a = r.roulis * Math.PI / 180, upx = Math.sin(a), upy = -Math.cos(a), ux = Math.cos(a), uy = Math.sin(a);
@@ -188,21 +225,27 @@ function hautTete(rgba, w, h, r, reg, rk) {
     const px = Math.round((x - reg.x) * rk), py = Math.round((y - reg.y) * rk);
     return px < 0 || py < 0 || px >= w || py >= h ? 0 : rgba[(py * w + px) * 4 + 3];
   };
-  let best = null;
+  let best = null, bord = false;
+  const pas = Math.max(1, 1 / rk);
+  const trou = Math.max(6 * pas, 0.05 * e);   // mèches fines : petits trous tolérés
   for (const off of [-0.3, -0.15, 0, 0.15, 0.3]) {
     const bx = r.yeux.x + ux * off * e, by = r.yeux.y + uy * off * e;
-    let t = 0, last = null;
-    const pas = Math.max(1, 1 / rk);
-    for (; t < 3 * r.yeuxMenton; t += pas) {
+    let last = null;
+    for (let t = 0; t < 3 * r.yeuxMenton; t += pas) {
+      if (by + upy * t < 0) { if (last != null && t - last <= trou) bord = true; break; }  // sortie par le haut de la photo
       if (alpha(bx + upx * t, by + upy * t) > 128) last = t;
-      else if (last != null && t - last > 6 * pas) break;   // trou de plus de quelques pixels : fin de la tête
+      else if (last != null && t - last > trou) break;   // fin de la tête
     }
     if (last != null && (best == null || last > best)) best = last;
   }
-  return best;
+  return { t: best, bord };
 }
 
-/** Netteté sur le visage ramené à 256 px de large (mesure indépendante de la résolution). */
+/**
+ * Netteté sur le visage ramené à 256 px de large au plus (jamais agrandi : l'agrandissement
+ * flouterait la mesure). Comparable entre photos pour les visages d'au moins 256 px ; en dessous,
+ * la mesure baisse avec la résolution, laquelle est de toute façon contrôlée à part.
+ */
 function mesureNettete(src, r) {
   const e = Math.hypot(r.iG.x - r.iD.x, r.iG.y - r.iD.y);
   const x = r.yeux.x - 1.1 * e, y = r.yeux.y - 0.6 * e, w = 2.2 * e, h = 0.6 * e + r.yeuxMenton;
@@ -338,7 +381,7 @@ function etatControles(s) {
   if (!s.mesure) { const m = rendre(s, 150, { mesurer: true }); free(m.canvas); m.canvas = null; s.mesure = m; }
   const m = s.mesure;
   return controles({ nbVisages: s.nb, r: s.r, c: m.c, blend: s.blend, lumPeau: m.lumPeau, brule: m.brule, bouche: m.bouche, asym: m.asym,
-    nettete: s.nettete, fond: FONDS[G.fond].hex, cheveuxCoupes: m.cheveuxCoupes, basVide: m.basVide });
+    nettete: s.nettete, fond: FONDS[G.fond].hex, cheveuxCoupes: m.cheveuxCoupes, basVide: m.basVide, hautCoupe: s.hautCoupe });
 }
 
 function refreshConformite() {
@@ -381,7 +424,7 @@ function construirePlanche(dpi) {
   for (const ph of p.photos) {
     const s = actifs()[ph.source];
     if (s?.status === 'ok') {
-      if (!cache.has(s.i)) cache.set(s.i, rendre(s, dpi).canvas);
+      if (!cache.has(s.i)) cache.set(s.i, rendu(s, dpi));
       x.drawImage(cache.get(s.i), ph.x, ph.y, ph.w, ph.h);
     } else {
       x.fillStyle = '#eceff2'; x.fillRect(ph.x, ph.y, ph.w, ph.h);
@@ -389,7 +432,7 @@ function construirePlanche(dpi) {
       x.fillText(G.mode === 'trio' ? `Personne ${ph.source + 1}` : 'Photo', ph.x + ph.w / 2, ph.y + ph.h / 2);
     }
   }
-  for (const c of cache.values()) free(c);
+  if (dpi !== NORME.dpiPlanche) for (const c of cache.values()) free(c);   // les rendus d'aperçu restent en cache
   // repères de coupe
   x.strokeStyle = '#9aa3ad'; x.lineWidth = Math.max(1, dpi / 254); x.beginPath();
   for (const [x1, y1, x2, y2] of p.traits) { x.moveTo(x1, y1); x.lineTo(x2, y2); }
@@ -402,10 +445,21 @@ function construirePlanche(dpi) {
   x.fillStyle = '#555'; x.font = `${Math.round(dpi / 22)}px system-ui`; x.textAlign = 'center'; x.fillText('10 mm', 0, 0); x.restore();
   return cv;
 }
+/** Rendu d'une photo ; mis en cache à la résolution de la planche affichée (évite de tout refaire à chaque mouvement de curseur). */
+function rendu(s, dpi) {
+  if (dpi !== NORME.dpiPlanche) return rendre(s, dpi).canvas;
+  const key = JSON.stringify([s.ver, s.adj, G.fond]);
+  if (s.rc?.key !== key) { free(s.rc?.canvas); s.rc = { key, canvas: rendre(s, dpi).canvas }; }
+  return s.rc.canvas;
+}
+let plancheKey = '';
 function dessinerPlanche() {
   const any = actifs().some(s => s.status === 'ok');
   $('empty').hidden = any;
   const cv = $('planche');
+  const key = JSON.stringify([G.mode, G.fond, actifs().map(s => [s.status, s.ver, s.adj])]);
+  if (key === plancheKey) return;
+  plancheKey = key;
   if (!any) { cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); return; }
   const p = construirePlanche(NORME.dpiPlanche);
   cv.getContext('2d').drawImage(p, 0, 0); free(p);
@@ -449,4 +503,4 @@ let toastT = 0;
 function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 3200); }
 
 renderSlots(); refresh();
-window.__identite = { slots, G, rendre, construirePlanche, etatControles };
+if (new URLSearchParams(location.search).has('debug')) window.__identite = { slots, G, rendre, construirePlanche, etatControles };

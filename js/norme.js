@@ -180,8 +180,14 @@ export function controles(m) {
   add('visage-unique', m.nbVisages === 1, 'Un seul visage sur la photo', m.nbVisages === 1 ? '' : `${m.nbVisages} visage(s) détecté(s)`);
   if (m.nbVisages !== 1) return out;
   const me = mesures(m.r, m.c);
-  add('taille-visage', me.visageMm >= NORME.visageMinMm && me.visageMm <= NORME.visageMaxMm,
-    'Visage de 32 à 36 mm (menton → sommet du crâne)', `≈ ${me.visageMm.toFixed(1)} mm (sommet du crâne estimé${m.r.craneBorne ? ' et borné par le haut de la tête' : ''})`);
+  // Le cadrage met le visage à la taille réglée : ce n'est pas une mesure indépendante, car le
+  // sommet du crâne (sous les cheveux) est estimé. Hors plage → KO ; dans la plage → information
+  // seulement (à vérifier sur l'aperçu), jamais un « vert ».
+  const dansPlage = me.visageMm >= NORME.visageMinMm && me.visageMm <= NORME.visageMaxMm;
+  add('taille-visage', dansPlage ? null : false, 'Visage de 32 à 36 mm (menton → sommet du crâne)',
+    `réglé à ${me.visageMm.toFixed(1)} mm ; sommet du crâne estimé${m.r.craneBorne ? ' (borné par le haut de la tête)' : ''} : vérifie sur l'aperçu que le trait du haut passe au sommet du crâne`);
+  if (m.hautCoupe != null) add('tete-entiere', !m.hautCoupe, 'Tête entière sur la photo d\u2019origine',
+    m.hautCoupe ? 'le haut de la tête touche le bord de la photo d\u2019origine : reprends la photo avec de l\u2019espace au-dessus' : '');
   if (m.cheveuxCoupes != null) add('cheveux', m.cheveuxCoupes ? null : true, 'Haut de la tête dans la photo',
     m.cheveuxCoupes ? 'les cheveux touchent le bord haut : réduis un peu la taille du visage si possible' : '');
   if (m.basVide != null) add('buste', !m.basVide, 'Épaules jusqu\u2019en bas de la photo',
