@@ -83,3 +83,18 @@ select { font: inherit; font-size: 14px; padding: 7px 8px; border-radius: 8px; b
 #conformite.ok { color: var(--ok); font-weight: 600; }
 .toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; max-width: calc(100vw - 32px); z-index: 20; }
 .toast.show { opacity: 1; }
+
+.slot-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.slot button.cam { font-size: 13px; }
+dialog.camera { border: 0; border-radius: var(--radius); padding: 14px; background: var(--card); color: var(--ink); width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+dialog.camera::backdrop { background: rgba(0,0,0,.6); }
+.cam-stage { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 3 / 4; max-height: 62vh; margin: 0 auto; }
+@media (orientation: landscape) { .cam-stage { aspect-ratio: 4 / 3; } }
+.cam-stage video, .cam-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.cam-stage video.miroir, .cam-stage video.miroir + canvas { transform: scaleX(-1); }
+.cam-count { position: absolute; inset: 0; display: grid; place-items: center; font-size: 96px; font-weight: 700; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,.6); pointer-events: none; }
+.cam-msg { font-size: 18px; font-weight: 600; text-align: center; margin: 10px 0 6px; }
+.cam-items { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0; justify-content: center; }
+.cam-items li { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); }
+.cam-items li.ok { color: var(--ok); }
+.cam-items li.ko { color: var(--ko); font-weight: 600; }

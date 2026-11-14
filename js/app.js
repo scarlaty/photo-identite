@@ -1,8 +1,9 @@
 import { RES } from './models.js';
-import { analyserVisage } from './face.js';
-import { NORME, FONDS, A_COCHER, reperes, cadre, mesures, controles, taillePhoto, zonesPeau, borneCrane } from './norme.js';
+import { analyserVisage, segmenterCheveux } from './face.js';
+import { NORME, FONDS, A_COCHER, reperes, cadre, mesures, controles, taillePhoto, zonesPeau, sommetCrane } from './norme.js';
 import { appliquer, lumZone, ecretage, nettete, expositionAuto } from './retouche.js';
 import { planche, jpegDpi } from './planche.js';
+import { cameraDisponible, ouvrirCamera } from './camera.js';
 
 const $ = id => document.getElementById(id);
 const MAX_SIDE = 4000;     // côté max de la photo source conservée
@@ -121,7 +122,7 @@ function renderSlots() {
     const nom = G.mode === 'trio' ? `Personne ${s.i + 1}` : 'Photo';
     const etat = { vide: 'Aucune photo', analyse: 'Analyse en cours…', ok: 'Prête — clique pour régler', err: '⚠️ ' + (s.err || 'échec') }[s.status];
     el.innerHTML = `<div class="ph">＋</div><div class="info"><strong></strong><span></span></div>
-      <label class="btn ghost small">Choisir…<input type="file" accept="image/*"></label>`;
+      <div class="slot-btns"><label class="btn ghost small">Choisir…<input type="file" accept="image/*"></label>${cameraDisponible() ? '<button type="button" class="btn ghost small cam">Caméra</button>' : ''}</div>`;
     el.querySelector('strong').textContent = nom;
     el.setAttribute('aria-label', `${nom} : ${etat}`);
     const inp = el.querySelector('input');
@@ -131,7 +132,9 @@ function renderSlots() {
     el.querySelector('span').textContent = etat;
     if (s.thumb) { const c = canvas(56, 72); c.getContext('2d').drawImage(s.thumb, 0, 0, 56, 72); el.querySelector('.ph').replaceWith(c); }
     el.querySelector('input').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) charger(s, f); };
-    el.onclick = e => { if (e.target.closest('label')) return; if (s.status === 'ok') { sel = s.i; refresh(); } };
+    const cam = el.querySelector('.cam');
+    if (cam) { cam.setAttribute('aria-label', `Prendre la photo avec la caméra — ${nom}`); cam.onclick = () => { if (cam.disabled) return; cam.disabled = true; ouvrirCamera().then(f => { if (f) charger(s, f); }).finally(() => { cam.disabled = false; }); }; }
+    el.onclick = e => { if (e.target.closest('label, button')) return; if (s.status === 'ok') { sel = s.i; refresh(); } };
     el.ondragover = e => e.preventDefault();
     el.ondrop = e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) charger(s, f); };
     box.appendChild(el);
@@ -167,13 +170,15 @@ async function analyser(s, tok) {
   const src = scaled(bmp, MAX_SIDE); bmp.close?.();
   try {
     const W = src.width, H = src.height;
-    const small = scaled(src, 1600);
-    const f = await analyserVisage(small);
-    free(small);
-    if (!f.nb) throw new Error('aucun visage détecté : photo de face, bien éclairée');
+    const f = await chercherVisage(src, () => s.tok !== tok);
+    if (s.tok !== tok) return;
+    if (!f.nb) throw new Error('aucun visage détecté : photo de face, bien éclairée (ou plus serrée sur le visage)');
     if (s.tok !== tok) return;
     const r = reperes(f.lm, W, H);
     const nettete_ = mesureNettete(src, r);
+    setStatus('Analyse des cheveux…');
+    const cheveux = await cheveuxTete(src, r);
+    if (s.tok !== tok) return;
     // Zone à détourer : le plus grand cadre possible (visage minimal, décalages maximaux), redressé
     const c = cadre(r, { visageMm: 32, dx: 0, dy: 0 });
     const pad = 4 * c.pxParMm;  // marge pour les décalages (±3 mm) et l'arrondi
@@ -202,30 +207,82 @@ async function analyser(s, tok) {
     const rgba = await matte(px, rw, rh, mask);
     if (s.tok !== tok) return;
     // Haut réel de la tête (chevelure comprise) : borne l'estimation du sommet du crâne
-    // Si la tête touche le bord haut de la photo d'origine, le vrai sommet est inconnu : pas de borne.
-    const ht = hautTete(rgba, rw, rh, r, reg, rk);
-    r.craneBorne = ht.bord ? false : borneCrane(r, ht.t);
+    // Si la tête touche le bord haut de la photo d'origine, le vrai sommet est inconnu.
+    const ht = hautTete(rgba, rw, rh, r, reg, rk, cheveux);
+    if (ht.bord) r.crane = 'estime'; else sommetCrane(r, ht.t, ht.cheveux, ht.peau);
     const cut = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba.buffer), rw, rh));
     if (s.tok !== tok) { cut.close(); return; }
     s.cut?.close?.();
-    Object.assign(s, { W, H, r, blend: f.blend, nb: f.nb, nettete: nettete_, cut, reg, hautCoupe: ht.bord });
+    // diag : mesures brutes, pour le débogage (?debug) et l'étalonnage
+    Object.assign(s, { W, H, r, blend: f.blend, nb: f.nb, nettete: nettete_, cut, reg, hautCoupe: ht.bord, diag: { yeuxHaut: ht.t, cheveuxHaut: ht.cheveux, peauHaut: ht.peau, yeuxMenton: r.yeuxMenton } });
   } finally { free(src); }
+}
+
+/**
+ * Visage sur toute l'image, puis, s'il est trop petit pour le détecteur (photo en pied, de loin),
+ * sur des zones de plus en plus petites. Les repères sont ramenés aux coordonnées de l'image entière.
+ * `annule()` vrai : une autre photo a été chargée entre-temps, on arrête.
+ */
+async function chercherVisage(src, annule = () => false) {
+  const W = src.width, H = src.height;
+  const essai = async (x, y, w, h) => {
+    const k = Math.min(1, 1600 / Math.max(w, h));
+    const c = canvas(Math.round(w * k), Math.round(h * k)), cx = c.getContext('2d');
+    cx.imageSmoothingQuality = 'high'; cx.drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
+    const f = await analyserVisage(c); free(c);
+    if (f.nb) f.lm = f.lm.map(p => ({ x: (x + p.x * w) / W, y: (y + p.y * h) / H, z: p.z }));
+    return f;
+  };
+  let f = await essai(0, 0, W, H);
+  if (f.nb) return f;
+  setStatus('Visage petit sur la photo : recherche par zones…');
+  for (const part of [0.6, 0.4]) {
+    const cote = Math.min(W, H) * part, pas = cote / 2;
+    let best = null;
+    for (let y = 0; y + cote <= H + 1; y += pas) for (let x = 0; x + cote <= W + 1; x += pas) {
+      if (annule()) return { nb: 0 };
+      f = await essai(Math.min(x, W - cote), Math.min(y, H - cote), cote, cote);
+      // le visage doit être entièrement dans la zone : repères tous loin des bords
+      if (f.nb && f.lm.every(p => p.x * W > x + 2 && p.x * W < x + cote - 2 && p.y * H > y + 2 && p.y * H < y + cote - 2)) {
+        const taille = Math.abs(f.lm[152].y - f.lm[10].y);
+        if (!best || taille > best.taille) best = { ...f, taille };
+      }
+    }
+    if (best) return best;
+  }
+  return { nb: 0 };
+}
+
+/** Probabilité « cheveux » sur un carré autour de la tête (512 px). null si indisponible. */
+async function cheveuxTete(src, r) {
+  const cote = 3.4 * r.yeuxMenton, x = r.yeux.x - cote / 2, y = r.yeux.y - 0.62 * cote;
+  const c = canvas(512, 512), cx = c.getContext('2d');
+  cx.fillStyle = '#000'; cx.fillRect(0, 0, 512, 512);
+  cx.drawImage(src, x, y, cote, cote, 0, 0, 512, 512);
+  const m = await segmenterCheveux(c); free(c);
+  if (!m) return null;
+  const k = m.w / cote;
+  return (sx, sy) => {
+    const px = Math.floor((sx - x) * k), py = Math.floor((sy - y) * k);
+    return px < 0 || py < 0 || px >= m.w || py >= m.h ? null : m.data[py * m.w + px];
+  };
 }
 
 /**
  * Distance (px source, repère redressé) entre la ligne des yeux et le haut de la tête détourée,
  * mesurée le long de la verticale du visage (perpendiculaire à la ligne des yeux), sur une bande
- * centrale. Renvoie { t (null si introuvable), bord } ; bord = la tête atteint le bord haut de
- * la photo d'origine (sommet réel hors image).
+ * centrale. Renvoie { t (null si introuvable), bord, cheveux, peau } : bord = la tête atteint le
+ * bord haut de la photo d'origine ; cheveux = probabilité moyenne « cheveux » sous le haut ;
+ * peau = le haut de la tête a la couleur du front (pas un bonnet, un foulard…).
  */
-function hautTete(rgba, w, h, r, reg, rk) {
+function hautTete(rgba, w, h, r, reg, rk, cheveux = null) {
   const a = r.roulis * Math.PI / 180, upx = Math.sin(a), upy = -Math.cos(a), ux = Math.cos(a), uy = Math.sin(a);
   const e = Math.hypot(r.iG.x - r.iD.x, r.iG.y - r.iD.y);
   const alpha = (x, y) => {
     const px = Math.round((x - reg.x) * rk), py = Math.round((y - reg.y) * rk);
     return px < 0 || py < 0 || px >= w || py >= h ? 0 : rgba[(py * w + px) * 4 + 3];
   };
-  let best = null, bord = false;
+  let best = null, bord = false, bestOff = 0;
   const pas = Math.max(1, 1 / rk);
   const trou = Math.max(6 * pas, 0.05 * e);   // mèches fines : petits trous tolérés
   for (const off of [-0.3, -0.15, 0, 0.15, 0.3]) {
@@ -236,9 +293,38 @@ function hautTete(rgba, w, h, r, reg, rk) {
       if (alpha(bx + upx * t, by + upy * t) > 128) last = t;
       else if (last != null && t - last > trou) break;   // fin de la tête
     }
-    if (last != null && (best == null || last > best)) best = last;
+    if (last != null && (best == null || last > best)) { best = last; bestOff = off; }
   }
-  return { t: best, bord };
+  // Cheveux sur le haut de la tête ? moyenne sur une bande sous le haut détouré (3 colonnes)
+  let ch = null;
+  if (cheveux && best != null) {
+    let s = 0, n = 0;
+    for (const off of [bestOff - 0.15, bestOff, bestOff + 0.15]) for (let t = best - 0.1 * r.yeuxMenton; t <= best - 0.01 * r.yeuxMenton; t += 0.01 * r.yeuxMenton) {
+      const v = cheveux(r.yeux.x + ux * off * e + upx * t, r.yeux.y + uy * off * e + upy * t);
+      if (v != null) { s += v; n++; }
+    }
+    ch = n ? s / n : null;
+  }
+  // Couleur du haut de la tête comparée à celle du front (chromaticité r, g normalisées)
+  let peau = false;
+  if (best != null) {
+    const couleur = pts => {
+      let R = 0, G = 0, B = 0, n = 0;
+      for (const [x, y] of pts) {
+        const px = Math.round((x - reg.x) * rk), py = Math.round((y - reg.y) * rk);
+        if (px < 0 || py < 0 || px >= w || py >= h) continue;
+        const i = (py * w + px) * 4; if (rgba[i + 3] < 200) continue;
+        R += rgba[i]; G += rgba[i + 1]; B += rgba[i + 2]; n++;
+      }
+      const S = R + G + B;
+      return n && S ? [R / S, G / S] : null;
+    };
+    const pts = (t0, t1, offs) => { const o = []; for (const off of offs) for (let t = t0; t <= t1; t += 0.01 * r.yeuxMenton) o.push([r.yeux.x + ux * off * e + upx * t, r.yeux.y + uy * off * e + upy * t]); return o; };
+    const haut = couleur(pts(best - 0.12 * r.yeuxMenton, best - 0.03 * r.yeuxMenton, [bestOff - 0.15, bestOff, bestOff + 0.15]));
+    const front = couleur(pts(0.35 * r.yeuxMenton, 0.5 * r.yeuxMenton, [-0.2, 0, 0.2]));
+    peau = !!(haut && front && Math.hypot(haut[0] - front[0], haut[1] - front[1]) < 0.035);
+  }
+  return { t: best, bord, cheveux: ch, peau };
 }
 
 /**
@@ -367,7 +453,7 @@ function dessinerApercu(s) {
     x.setLineDash([]);
     x.beginPath(); x.moveTo(cv.width - 14, me.craneMm * mm); x.lineTo(cv.width - 14, me.mentonMm * mm); x.stroke();
     x.save(); x.translate(cv.width - 18, (me.craneMm + me.mentonMm) / 2 * mm); x.rotate(-Math.PI / 2);
-    x.fillStyle = x.strokeStyle; x.textAlign = 'center'; x.fillText(`≈ ${me.visageMm.toFixed(1)} mm`, 0, 0); x.restore();
+    x.fillStyle = x.strokeStyle; x.textAlign = 'center'; x.fillText(`${s.r.crane === 'mesure' ? '' : '≈ '}${me.visageMm.toFixed(1)} mm`, 0, 0); x.restore();
     // axe vertical
     x.strokeStyle = 'rgba(30,58,95,.35)'; x.setLineDash([2, 4]);
     x.beginPath(); x.moveTo(cv.width / 2, 0); x.lineTo(cv.width / 2, cv.height); x.stroke(); x.setLineDash([]);
@@ -503,4 +589,4 @@ let toastT = 0;
 function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 3200); }
 
 renderSlots(); refresh();
-if (new URLSearchParams(location.search).has('debug')) window.__identite = { slots, G, rendre, construirePlanche, etatControles };
+if (new URLSearchParams(location.search).has('debug')) window.__identite = { slots, G, rendre, construirePlanche, etatControles, charger };

@@ -40,19 +40,20 @@ export function ecretage(rgba, w, h, x0, y0, x1, y1, lo = 0.03, hi = 0.98) {
 }
 
 /**
- * Netteté : variance du laplacien sur l'image en niveaux de gris (zone du visage, ramenée à une
- * largeur fixe par l'appelant pour que la mesure ne dépende pas de la résolution).
+ * Netteté : variance du laplacien rapportée à la variance des niveaux de gris (× 1000), sur la zone
+ * du visage ramenée à une largeur fixe par l'appelant. Rapportée au contraste, la mesure ne pénalise
+ * pas les peaux foncées ou les éclairages doux (photos nettes : 14 à 93 ; floutées σ = 1,5 : 1 à 6).
  */
 export function nettete(gray, w, h) {
-  let s = 0, s2 = 0, n = 0;
+  let s = 0, s2 = 0, n = 0, g = 0, g2 = 0;
   for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
     const i = y * w + x;
     const l = gray[i - w] + gray[i + w] + gray[i - 1] + gray[i + 1] - 4 * gray[i];
-    s += l; s2 += l * l; n++;
+    s += l; s2 += l * l; n++; g += gray[i]; g2 += gray[i] * gray[i];
   }
   if (!n) return 0;
-  const m = s / n;
-  return s2 / n - m * m;
+  const vl = s2 / n - (s / n) ** 2, vg = g2 / n - (g / n) ** 2;
+  return vg > 1e-6 ? 1000 * vl / vg : 0;
 }
 
 /**

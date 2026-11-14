@@ -16,10 +16,11 @@ export const NORME = {
   // « du bas du menton au sommet du crâne (hors cheveux) » : 32 à 36 mm (70 à 80 % de la photo)
   visageMinMm: 32,
   visageMaxMm: 36,
-  visageCibleMm: 33,   // bas de la plage : laisse la place aux cheveux au-dessus du crâne
+  visageCibleMm: 34,   // milieu de la plage 32–36 : marge maximale face à l’incertitude sur le sommet du crâne
+  craneSurMenton: 0.85, // yeux → sommet du crâne = 0,85 × yeux → menton (mesuré sur crânes dégagés : 0,78–0,89)
   // Le sommet du crâne est placé à 4 mm du bord haut : laisse un peu de place aux cheveux et met les
   // yeux dans la « zone des yeux » de la norme ISO/IEC 19794-5 (50 à 70 % de la hauteur depuis le bas).
-  crane_haut_mm: 4,    // visage 33 mm → yeux à ~54 % depuis le bas (marge des deux côtés)
+  crane_haut_mm: 4,    // sommet du crâne à 4 mm du haut : place pour les cheveux, yeux vers 56 % depuis le bas
   yeuxBasMin: 0.50,   // zone des yeux (ISO/IEC 19794-5)
   yeuxBasMax: 0.70,
   // Résolutions d'impression
@@ -60,7 +61,7 @@ export function reperes(lm, W, H) {
   const yeuxMenton = Math.abs((menton.x - yeux.x) * -uy + (menton.y - yeux.y) * ux);
   return {
     yeux, menton, nez, iD, iG, roulis, yeuxMenton,
-    yeuxCrane: yeuxMenton,                     // estimation ; voir borneCrane()
+    yeuxCrane: NORME.craneSurMenton * yeuxMenton,   // estimation ; voir sommetCrane()
     get hauteurTete() { return this.yeuxMenton + this.yeuxCrane; },  // menton → sommet du crâne, hors cheveux
     joueD: p(LM.joueD), joueG: p(LM.joueG),
     pommetteD: p(LM.pommetteD), pommetteG: p(LM.pommetteG),
@@ -77,6 +78,22 @@ export function borneCrane(r, yeuxHaut) {
   if (yeuxHaut == null || !(yeuxHaut > 0)) return false;
   if (yeuxHaut < r.yeuxCrane) { r.yeuxCrane = yeuxHaut; return true; }
   return false;
+}
+
+/**
+ * Sommet du crâne à partir du haut réel de la tête détourée (`yeuxHaut`, px depuis les yeux) et de
+ * la probabilité « cheveux » des pixels du haut de la tête (`cheveuxHaut`, 0..1, null si inconnue).
+ *  - haut de tête sans cheveux (crâne rasé ou chauve) : le sommet est MESURÉ → 'mesure' ;
+ *  - sinon l'estimation anthropométrique est gardée, bornée par le haut de la tête → 'borne' | 'estime'.
+ * Met à jour r.yeuxCrane et r.crane.
+ */
+export function sommetCrane(r, yeuxHaut, cheveuxHaut, peauHaut = true) {
+  // plausible : crânes dégagés mesurés à 0,78–0,89 × yeux→menton ; borne haute sous la marge de la zone détourée
+  const plausible = yeuxHaut > 0 && yeuxHaut > 0.7 * r.yeuxMenton && yeuxHaut < 1.2 * r.yeuxMenton;
+  // peauHaut : le haut de la tête a la couleur du front (sinon bonnet, foulard… : pas de mesure)
+  if (plausible && peauHaut && cheveuxHaut != null && cheveuxHaut < SEUILS.crane_degage) { r.yeuxCrane = yeuxHaut; r.crane = 'mesure'; }
+  else r.crane = borneCrane(r, yeuxHaut) ? 'borne' : 'estime';
+  return r.crane;
 }
 
 /**
@@ -137,7 +154,9 @@ export function lacet(r) {
 // Seuils des contrôles automatiques (valeurs de prudence : une photo de cabine agréée passe
 // largement ; au-delà, l'agent d'accueil peut refuser).
 export const SEUILS = {
-  roulisMax: 8,             // au-delà, redressement trop fort : refaire la photo
+  crane_degage: 0.25,     // probabilité « cheveux » moyenne en haut de la tête sous laquelle le crâne est dégagé
+  roulisMax: 8,             // au-delà : redressée quand même, mais signalée (info)
+  roulisKo: 15,             // au-delà : KO (redressement trop fort : épaules et cou de travers)
   lacetEcart: 0.06,         // |t - 0,5| ≈ 7° de rotation
   yeuxFermes: 0.45,         // blendshape eyeBlink
   boucheOuverte: 0.12,      // blendshape jawOpen
@@ -146,7 +165,8 @@ export const SEUILS = {
   ecretageMax: 0.04,        // part maximale de peau brûlée (≥ 0,98) ou bouchée (≤ 0,03)
   asymetrieInfo: 1.25,      // rapport de luminance entre les deux joues : au-delà, avertissement
   asymetrieMax: 1.50,       // au-delà, ombre nette sur une moitié du visage (mesure par zones, approximative)
-  netteteMin: 50,           // variance du laplacien, visage ≤ 256 px de large (photo nette ≈ 500, flou σ=1,5 ≈ 15)
+  netteteMin: 4,            // netteté normalisée (retouche.js) : en dessous, floue (KO)
+  netteteInfo: 8,           // entre les deux : limite, à vérifier
   fondLumMin: 0.70, fondLumMax: 0.93, // clair mais pas blanc
 };
 
@@ -183,9 +203,12 @@ export function controles(m) {
   // Le cadrage met le visage à la taille réglée : ce n'est pas une mesure indépendante, car le
   // sommet du crâne (sous les cheveux) est estimé. Hors plage → KO ; dans la plage → information
   // seulement (à vérifier sur l'aperçu), jamais un « vert ».
+  // Crâne dégagé (rasé, chauve) : sommet mesuré sur le détourage → vrai contrôle.
   const dansPlage = me.visageMm >= NORME.visageMinMm && me.visageMm <= NORME.visageMaxMm;
-  add('taille-visage', dansPlage ? null : false, 'Visage de 32 à 36 mm (menton → sommet du crâne)',
-    `réglé à ${me.visageMm.toFixed(1)} mm ; sommet du crâne estimé${m.r.craneBorne ? ' (borné par le haut de la tête)' : ''} : vérifie sur l'aperçu que le trait du haut passe au sommet du crâne`);
+  if (m.r.crane === 'mesure') add('taille-visage', dansPlage, 'Visage de 32 à 36 mm (menton → sommet du crâne)',
+    `${me.visageMm.toFixed(1)} mm (crâne dégagé : sommet mesuré)`);
+  else add('taille-visage', dansPlage ? null : false, 'Visage de 32 à 36 mm (menton → sommet du crâne)',
+    `réglé à ${me.visageMm.toFixed(1)} mm ; sommet du crâne estimé sous les cheveux${m.r.crane === 'borne' ? ' (borné par le haut de la tête)' : ''} : vérifie sur l'aperçu que le trait du haut passe au sommet du crâne`);
   if (m.hautCoupe != null) add('tete-entiere', !m.hautCoupe, 'Tête entière sur la photo d\u2019origine',
     m.hautCoupe ? 'le haut de la tête touche le bord de la photo d\u2019origine : reprends la photo avec de l\u2019espace au-dessus' : '');
   if (m.cheveuxCoupes != null) add('cheveux', m.cheveuxCoupes ? null : true, 'Haut de la tête dans la photo',
@@ -196,7 +219,7 @@ export function controles(m) {
     'Yeux dans la zone de la norme', `${Math.round(me.yeuxRatioBas * 100)} % de la hauteur depuis le bas`);
   add('centrage', Math.abs(me.centreX - NORME.largeurMm / 2) <= 1.5, 'Visage centré', `${(me.centreX - NORME.largeurMm / 2).toFixed(1)} mm`);
   add('menton', me.mentonMm <= NORME.hauteurMm - 1, 'Menton entièrement visible', `${me.mentonMm.toFixed(1)} mm du haut`);
-  add('tete-droite', Math.abs(m.r.roulis) <= SEUILS.roulisMax, 'Tête droite',
+  add('tete-droite', Math.abs(m.r.roulis) <= SEUILS.roulisMax ? true : Math.abs(m.r.roulis) <= SEUILS.roulisKo ? null : false, 'Tête droite',
     Math.abs(m.r.roulis) > 0.5 ? `inclinaison de ${Math.abs(m.r.roulis).toFixed(1)}° corrigée automatiquement` : '');
   const t = lacet(m.r);
   add('face', Math.abs(t - 0.5) <= SEUILS.lacetEcart, 'Visage de face', Math.abs(t - 0.5) > SEUILS.lacetEcart ? 'tête tournée sur le côté' : '');
@@ -221,7 +244,8 @@ export function controles(m) {
     add('ombre', m.asym <= SEUILS.asymetrieInfo ? true : m.asym <= SEUILS.asymetrieMax ? null : false, "Pas d'ombre sur le visage",
       m.asym <= SEUILS.asymetrieInfo ? '' : m.asym <= SEUILS.asymetrieMax ? `une joue est environ ${pct} % plus sombre : vérifie à l'œil, éclaire de face si besoin` : `une moitié du visage est ${pct} % plus sombre : refais la photo face à la lumière`);
   }
-  if (m.nettete != null) add('nettete', m.nettete >= SEUILS.netteteMin, 'Photo nette', m.nettete < SEUILS.netteteMin ? 'photo floue ou bougée' : '');
+  if (m.nettete != null) add('nettete', m.nettete >= SEUILS.netteteInfo ? true : m.nettete >= SEUILS.netteteMin ? null : false, 'Photo nette',
+    m.nettete >= SEUILS.netteteInfo ? '' : m.nettete >= SEUILS.netteteMin ? 'netteté limite : vérifie que les yeux sont nets' : 'photo floue ou bougée');
   if (m.fond) add('fond', fondConforme(m.fond).ok, 'Fond uni, clair, non blanc (couleur choisie)', '');
   if (m.c) {
     const res = resolution(m.c);

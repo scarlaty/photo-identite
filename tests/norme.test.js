@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NORME, SEUILS, LM, reperes, cadre, mesures, controles, taillePhoto, fondConforme, FONDS, resolution, lacet, borneCrane } from '../js/norme.js';
+import { NORME, SEUILS, LM, reperes, cadre, mesures, controles, taillePhoto, fondConforme, FONDS, resolution, lacet, borneCrane, sommetCrane } from '../js/norme.js';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
 
@@ -21,12 +21,12 @@ test('format 35×45 à 600 dpi', () => {
   assert.deepEqual(taillePhoto(300), [413, 531]);
 });
 
-test('repères : roulis, hauteur de tête = 2 × (yeux → menton)', () => {
+test('repères : roulis, hauteur de tête = (1 + craneSurMenton) × (yeux → menton)', () => {
   const { lm, W, H } = visage({ d: 300, roulisDeg: 5 });
   const r = reperes(lm, W, H);
   close(r.roulis, 5, 1e-6);
   close(r.yeuxMenton, 300, 1e-6);
-  close(r.hauteurTete, 600, 1e-6);
+  close(r.hauteurTete, 300 * (1 + NORME.craneSurMenton), 1e-6);
 });
 
 test('cadre : visage de 34 mm, yeux dans la zone 50–70 %, centré, quelle que soit la taille source', () => {
@@ -60,9 +60,9 @@ test('contrôles : photo conforme → tout vert', () => {
 });
 
 test('contrôles : chaque défaut est signalé', () => {
-  const { lm, W, H } = visage({ d: 60, roulisDeg: 12, nezDx: 40 });  // visage minuscule : < 200 dpi utiles
+  const { lm, W, H } = visage({ d: 60, roulisDeg: 20, nezDx: 40 });  // visage minuscule : < 200 dpi utiles
   const r = reperes(lm, W, H), c = cadre(r, { zoom: 1.2 });
-  const res = controles({ nbVisages: 1, r, c, blend: { eyeBlinkLeft: .8, jawOpen: .3, mouthSmileLeft: .6 }, lumPeau: .5, brule: .2, asym: 1.6, nettete: 5, fond: '#FFFFFF' });
+  const res = controles({ nbVisages: 1, r, c, blend: { eyeBlinkLeft: .8, jawOpen: .3, mouthSmileLeft: .6 }, lumPeau: .5, brule: .2, asym: 1.6, nettete: 2, fond: '#FFFFFF' });
   const ko = new Set(res.filter(x => x.ok === false).map(x => x.id));
   for (const id of ['taille-visage', 'tete-droite', 'face', 'yeux-ouverts', 'bouche-fermee', 'neutre', 'exposition', 'ombre', 'nettete', 'fond', 'resolution'])
     assert.ok(ko.has(id), `défaut non signalé : ${id}`);
@@ -80,7 +80,7 @@ test('fond : couleurs proposées conformes, blanc et couleurs vives refusés', (
 test('résolution et lacet', () => {
   const { lm, W, H } = visage({ d: 300 });
   const r = reperes(lm, W, H), c = cadre(r);
-  close(resolution(c, 600).ratio, (600 / NORME.visageCibleMm) / (600 / 25.4), 1e-9);
+  close(resolution(c, 600).ratio, (r.hauteurTete / NORME.visageCibleMm) / (600 / 25.4), 1e-9);
   close(lacet(r), 0.5, 1e-9);
   assert.ok(SEUILS.lacetEcart > 0);
 });
@@ -107,9 +107,9 @@ test('sommet du crâne borné par le haut réel de la tête (crâne rasé)', () 
   const { lm, W, H } = visage({ d: 300 });
   const r = reperes(lm, W, H);
   assert.equal(borneCrane(r, 400), false);         // cheveux au-dessus de l'estimation : inchangé
-  assert.equal(r.yeuxCrane, 300);
-  assert.equal(borneCrane(r, 260), true);          // haut de tête plus bas que l'estimation
-  assert.equal(r.hauteurTete, 560);
+  assert.equal(r.yeuxCrane, 255);
+  assert.equal(borneCrane(r, 240), true);          // haut de tête plus bas que l'estimation
+  assert.equal(r.hauteurTete, 540);
   const m = mesures(r, cadre(r));
   close(m.visageMm, NORME.visageCibleMm, 1e-9);
   close(m.craneMm, NORME.crane_haut_mm, 1e-9);
@@ -132,4 +132,20 @@ test('tête coupée en haut de la photo d’origine : signalée', () => {
   assert.equal(ok(true), false);
   assert.equal(ok(false), true);
   assert.equal(ok(undefined), undefined);
+});
+
+test('sommet du crâne : mesuré si le haut de la tête est sans cheveux, estimé sinon', () => {
+  const mk = () => { const { lm, W, H } = visage({ d: 300 }); return reperes(lm, W, H); };
+  let r = mk();
+  assert.equal(sommetCrane(r, 330, 0.05), 'mesure');      // crâne rasé : mesure, même au-dessus de l'estimation
+  assert.equal(r.yeuxCrane, 330);
+  const c = controles({ nbVisages: 1, r, c: cadre(r) }).find(x => x.id === 'taille-visage');
+  assert.equal(c.ok, true);
+  r = mk(); assert.equal(sommetCrane(r, 380, 0.9), 'estime');  // cheveux : estimation gardée
+  assert.equal(r.yeuxCrane, 255);
+  r = mk(); assert.equal(sommetCrane(r, 240, 0.9), 'borne');
+  r = mk(); assert.equal(sommetCrane(r, 330, null), 'estime');  // segmentation indisponible
+  r = mk(); assert.equal(sommetCrane(r, 270, 0.05, false), 'estime');  // bonnet ou foulard : pas de mesure
+  r = mk(); assert.equal(sommetCrane(r, 600, 0.05), 'estime');  // mesure aberrante ignorée
+  assert.equal(controles({ nbVisages: 1, r, c: cadre(r) }).find(x => x.id === 'taille-visage').ok, null);
 });

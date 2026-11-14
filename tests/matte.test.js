@@ -100,3 +100,31 @@ test('refine : une maille bleue collée au contour disparaît, le maillot bleu a
   assert.equal(out[(65 * w + 60) * 4 + 3], 255, 'logo bleu conservé');
   assert.equal(out[(80 * w + 60) * 4 + 3], 255, 'corps conservé');
 });
+
+test('estimateForeground : cheveux opaques teintés par le fond au bord → teinte des cheveux', () => {
+  // cas réel : le modèle juge opaques des mèches où le fond bleu transparaît (cheveux violets)
+  const w = 60, h = 20, N = w * h, rgba = new Uint8ClampedArray(N * 4), a = new Float32Array(N);
+  const roux = [190, 110, 60], bleu = [30, 60, 200], mix = roux.map((c, k) => Math.round(0.6 * c + 0.4 * bleu[k]));
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const p = y * w + x, c = x < 15 ? roux : x < 25 ? mix : bleu;
+    a[p] = x < 25 ? 1 : 0; rgba.set([...c, 255], p * 4);
+  }
+  const out = estimateForeground(rgba, a, w, h, 0.3);
+  const i = (10 * w + 24) * 4;
+  assert.ok(out[i] > out[i + 2] + 40, `rouge ${out[i]} nettement > bleu ${out[i + 2]} attendu`);
+  const j = (10 * w + 3) * 4;   // intérieur (hors bande) inchangé
+  assert.deepEqual([...out.slice(j, j + 3)], roux);
+});
+
+test('estimateForeground : maillot bleu opaque au bord, peau plus loin → couleur du maillot gardée', () => {
+  // fond bleu-gris à droite ; sujet : peau à gauche (x < 10), maillot bleu de x = 10 à 39 ; bord net
+  const w = 64, h = 24, N = w * h, rgba = new Uint8ClampedArray(N * 4), a = new Float32Array(N);
+  const peau = [200, 150, 120], maillot = [40, 70, 200], fond = [48, 98, 188];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const p = y * w + x, c = x < 10 ? peau : x < 40 ? maillot : fond;
+    a[p] = x < 40 ? 1 : 0; rgba.set([...c, 255], p * 4);
+  }
+  const out = estimateForeground(rgba, a, w, h, 0.1);
+  const i = (12 * w + 38) * 4;   // maillot, au contour
+  assert.ok(Math.abs(out[i] - 40) <= 8 && Math.abs(out[i + 2] - 200) <= 8, `maillot ${out[i]},${out[i + 1]},${out[i + 2]}`);
+});

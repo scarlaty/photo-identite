@@ -22,7 +22,7 @@ l'Intérieur sur la norme ISO/IEC 19794-5:2005.
 | Règle | Comment l'outil la traite |
 |---|---|
 | 35 × 45 mm | Rendu à la taille exacte : 827×1063 px à 600 dpi (photo seule), 413×531 px à 300 dpi (planche) |
-| Visage de 32 à 36 mm, du menton au sommet du crâne hors cheveux | Cadrage automatique à 33 mm (réglable de 32,5 à 35,5) ; le sommet du crâne est estimé par l'anthropométrie (yeux à mi-hauteur de la tête) |
+| Visage de 32 à 36 mm, du menton au sommet du crâne hors cheveux | Cadrage automatique à 34 mm, milieu de la plage (réglable de 32,5 à 35,5). Crâne dégagé (rasé, chauve) : sommet **mesuré** sur le détourage grâce à la segmentation des cheveux. Sinon, sommet **estimé** sous les cheveux (yeux → crâne = 0,85 × yeux → menton, calibré sur des crânes dégagés), borné par le haut réel de la tête, et signalé « à vérifier sur l'aperçu » |
 | Yeux dans la « zone des yeux » (50 à 70 % de la hauteur depuis le bas) | Vérifié ; zone affichée sur l'aperçu |
 | Tête droite, de face | Inclinaison corrigée automatiquement (contrôlée au-delà de 8°) ; rotation latérale contrôlée |
 | Fond uni, clair, blanc interdit | Sujet détouré, fond remplacé par gris clair, bleu clair ou gris perle (contrôle : clair mais jamais blanc) |
@@ -41,9 +41,16 @@ l'exposition et la couleur du sujet, jamais les traits du visage.
 - Une barre de **10 mm** est imprimée dans la marge pour vérifier que le tirage n'a pas été redimensionné.
 - Repères de coupe aux coins de chaque photo.
 
-## Prise de vue conseillée
+## Prise de vue
 
-Face à une fenêtre (lumière douce et de face), à 1,5–2 m, téléphone à hauteur des yeux, zoom ×2
+Le bouton **Caméra** ouvre une prise de vue guidée : ovale de placement et conseils en direct
+(distance, tête droite, regard, expression neutre, lumière, ombre sur une joue). La photo se
+déclenche seule après un compte à rebours quand tout est bon. Une photo choisie dans la galerie
+fonctionne aussi, y compris une photo en pied (le visage est recherché par zones).
+
+Conseils :
+
+- Face à une fenêtre (lumière douce et de face), à 1,5–2 m, téléphone à hauteur des yeux, zoom ×2
 si possible (moins de déformation), visage neutre, cheveux dégagés. Une photo en pleine résolution
 donne au moins 300 dpi utiles.
 

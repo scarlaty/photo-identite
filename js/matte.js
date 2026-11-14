@@ -161,19 +161,64 @@ export function estimateForeground(rgba, mask, w, h, scale = 1) {
   const N = w * h;
   const I = [new Float32Array(N), new Float32Array(N), new Float32Array(N)];
   for (let p = 0, i = 0; p < N; p++, i += 4) { I[0][p] = rgba[i] / 255; I[1][p] = rgba[i + 1] / 255; I[2][p] = rgba[i + 2] / 255; }
-  let F = I, B = I;
-  for (const r of [Math.max(3, 45 * scale), Math.max(1, 3 * scale)]) [F, B] = blurFusion(I, F, B, mask, w, h, r);
+  let F, B1;
+  { const [F1, b1] = blurFusion(I, I, I, mask, w, h, Math.max(3, 45 * scale)); B1 = b1; [F] = blurFusion(I, F1, B1, mask, w, h, Math.max(1, 3 * scale)); }
+  // Bande du contour (mèches) : là seulement on retire la teinte de l'ancien fond
+  const band = contourBand(mask, w, h, Math.max(4, 12 * scale));
+  // Couleur locale du sujet : pixels opaques HORS bande (sans reflet), voisins proches. Un maillot
+  // bleu au bord a pour voisins du maillot bleu : il n'est pas tiré vers une autre couleur.
+  const sub = subjectColor(I, mask, band, w, h, Math.max(6, 45 * scale), Math.max(1, Math.round(2 * scale)));
+  const lum = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
   const out = new Uint8ClampedArray(N * 4);
   for (let p = 0, i = 0; p < N; p++, i += 4) {
     const a = mask[p];
-    // Intérieur opaque : on garde les pixels d'origine (aucune perte de détail).
-    const t = a > 0.98 ? 1 : 0;
-    out[i] = 255 * (t ? I[0][p] : F[0][p]);
-    out[i + 1] = 255 * (t ? I[1][p] : F[1][p]);
-    out[i + 2] = 255 * (t ? I[2][p] : F[2][p]);
-    out[i + 3] = 255 * a;
+    // Opaque : pixels d'origine (aucune perte de détail ; seule la bande du contour passe ensuite par
+    // le retrait de teinte) ; bord semi-transparent : estimation blur-fusion
+    let r, g, b;
+    if (a > 0.98) { r = I[0][p]; g = I[1][p]; b = I[2][p]; } else { r = F[0][p]; g = F[1][p]; b = F[2][p]; }
+    const sc = (band[p] || a <= 0.98) && a > 0.01 ? sub(p) : null;
+    if (sc) {
+      // « Despill » : chromaticité du pixel (couleur / luminance) ramenée vers celle du sujet, mais
+      // seulement de la part qui va vers la couleur du fond d'origine (reflet bleu sur des cheveux
+      // roux) ; une couleur propre au sujet (maillot bleu) n'est pas tirée vers le fond, donc gardée.
+      const y = lum(r, g, b);
+      const [cr, cg, cb] = sc, yc = lum(cr, cg, cb);
+      const br = B1[0][p], bg = B1[1][p], bb = B1[2][p], yb = lum(br, bg, bb);
+      if (y > 1e-3 && yc > 1e-3 && yb > 1e-3) {
+        const pr = r / y, pg = g / y, pb = b / y;           // chromaticités
+        const sr = cr / yc, sg = cg / yc, sb = cb / yc;
+        const dr = br / yb - sr, dg = bg / yb - sg, db = bb / yb - sb;   // direction sujet → fond
+        const n2 = dr * dr + dg * dg + db * db;
+        if (n2 > 1e-4) {
+          const k = Math.max(0, Math.min(1, ((pr - sr) * dr + (pg - sg) * dg + (pb - sb) * db) / n2));
+          r = clamp01((pr - k * dr) * y); g = clamp01((pg - k * dg) * y); b = clamp01((pb - k * db) * y);
+        }
+      }
+    }
+    out[i] = 255 * r; out[i + 1] = 255 * g; out[i + 2] = 255 * b; out[i + 3] = 255 * a;
   }
   return out;
+}
+
+/**
+ * Couleur moyenne des pixels opaques hors bande autour de chaque pixel, calculée sur une grille
+ * réduite d'un facteur q (mémoire et temps ÷ q²). Renvoie p → [r, g, b] ou null (aucun voisin).
+ */
+function subjectColor(I, mask, band, w, h, r, q) {
+  const gw = Math.ceil(w / q), gh = Math.ceil(h / q), G = gw * gh;
+  const op = new Float32Array(G), acc = [new Float32Array(G), new Float32Array(G), new Float32Array(G)];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const p = y * w + x;
+    if (mask[p] <= 0.95 || band[p]) continue;
+    const g = ((y / q) | 0) * gw + ((x / q) | 0);
+    op[g]++; acc[0][g] += I[0][p]; acc[1][g] += I[1][p]; acc[2][g] += I[2][p];
+  }
+  const rr = Math.max(1, r / q), bop = boxBlur(op, gw, gh, rr), C = acc.map(c => boxBlur(c, gw, gh, rr));
+  return p => {
+    const g = (((p / w) | 0) / q | 0) * gw + (((p % w) / q) | 0);
+    const n = bop[g];
+    return n > 0.02 * q * q ? [C[0][g] / n, C[1][g] / n, C[2][g] / n] : null;   // ≥ 2 % de voisins opaques, sinon rien
+  };
 }
 
 function blurFusion(I, F, B, a, w, h, r) {
