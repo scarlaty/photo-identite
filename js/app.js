@@ -1,6 +1,6 @@
 import { RES } from './models.js';
 import { analyserVisage, segmenterCheveux } from './face.js';
-import { NORME, FONDS, A_COCHER, reperes, cadre, mesures, controles, taillePhoto, zonesPeau, sommetCrane, avecCrane, gabaritOvale } from './norme.js';
+import { NORME, FONDS, A_COCHER, reperes, cadre, mesures, controles, taillePhoto, zonesPeau, sommetCrane, avecCrane, gabaritOvale, couleurFond, normaliserFonce } from './norme.js';
 import { appliquer, lumZone, ecretage, nettete, expositionAuto } from './retouche.js';
 import { planche, jpegDpi } from './planche.js';
 import { cameraDisponible, ouvrirCamera } from './camera.js';
@@ -12,11 +12,15 @@ const ADJ0 = { visage: NORME.visageCibleMm, crane: 0, dx: 0, dy: 0, exposition: 
 
 /* ---------------- réglages globaux ---------------- */
 const STORE = 'photo-identite:v1';
-const G = { mode: 'identiques', fond: 'gris-clair', ovale: false };
+const G = { mode: 'identiques', fond: 'gris-clair', fonce: 0, ovale: false };
 try { Object.assign(G, JSON.parse(localStorage.getItem(STORE) || '{}')); } catch { /* stockage indisponible */ }
 if (!['identiques', 'trio'].includes(G.mode)) G.mode = 'identiques';
 if (!FONDS[G.fond]) G.fond = 'gris-clair';
 G.ovale = G.ovale === true;
+G.fonce = normaliserFonce(G.fonce);
+/** Couleur de fond choisie, foncée selon le curseur (toujours conforme). Mémorisée. */
+let fondMemo = { k: '', v: '' };
+const fondHex = () => { const k = G.fond + '|' + G.fonce; if (fondMemo.k !== k) fondMemo = { k, v: couleurFond(FONDS[G.fond].hex, G.fonce) }; return fondMemo.v; };
 const persist = () => { try { localStorage.setItem(STORE, JSON.stringify(G)); } catch { /* idem */ } };
 
 /* ---------------- workers (détourage) ---------------- */
@@ -131,6 +135,7 @@ function renderSlots() {
     // clavier : arriver sur « Choisir… » d'une personne prête la sélectionne pour les réglages
     inp.onfocus = () => { if (s.status === 'ok' && sel !== s.i) { sel = s.i; refresh(); markSel(); } };
     el.querySelector('span').textContent = etat;
+    if (s.status === 'ok' && !s.thumb) s.thumb = vignette(s);   // photo prête sans avoir été sélectionnée
     if (s.thumb) { const c = canvas(56, 72); c.getContext('2d').drawImage(s.thumb, 0, 0, 56, 72); el.querySelector('.ph').replaceWith(c); }
     el.querySelector('input').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) charger(s, f); };
     const cam = el.querySelector('.cam');
@@ -386,7 +391,7 @@ function rendre(s, dpi, { mesurer = false, brut = false } = {}) {
   }
   sx.putImageData(img, 0, 0);
   const fin = canvas(OW, OH), fx = fin.getContext('2d');
-  fx.fillStyle = FONDS[G.fond].hex; fx.fillRect(0, 0, OW, OH);
+  fx.fillStyle = fondHex(); fx.fillRect(0, 0, OW, OH);
   fx.drawImage(sujet, 0, 0); free(sujet);
   out.canvas = fin;
   return out;
@@ -415,6 +420,7 @@ $('ovale').checked = G.ovale;
 $('ovale').onchange = e => { G.ovale = e.target.checked; persist(); refresh(); };
 for (const [k, f] of Object.entries(FONDS)) $('fond').add(new Option(f.nom, k));
 $('fond').onchange = e => { G.fond = e.target.value; persist(); refresh(); };
+$('fonce').addEventListener('input', e => { G.fonce = normaliserFonce(e.target.value); persist(); schedule(); });
 $('mode').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b || b.dataset.v === G.mode) return;
   G.mode = b.dataset.v; persist(); if (sel >= actifs().length) sel = 0; renderSlots(); refresh();
@@ -426,7 +432,9 @@ function schedule() { cancelAnimationFrame(raf); raf = requestAnimationFrame(ref
 
 function refresh() {
   [...$('mode').children].forEach(b => { b.classList.toggle('on', b.dataset.v === G.mode); b.setAttribute('aria-pressed', b.dataset.v === G.mode); });
-  $('fond').value = G.fond; $('fondSw').style.background = FONDS[G.fond].hex;
+  $('fond').value = G.fond; $('fondSw').style.background = fondHex();
+  $('fonce').value = G.fonce; $('fonceV').textContent = `${Math.round(G.fonce * 100)} %`; $('fonce').setAttribute('aria-valuetext', $('fonceV').textContent);
+  vignettesFond();
   const s = slots[sel];
   const ok = s.status === 'ok';
   $('reglages').hidden = !ok; $('editor').hidden = !ok;
@@ -437,6 +445,23 @@ function refresh() {
   }
   dessinerPlanche();
   refreshConformite();
+}
+
+/** Vignette 112×144 d'une photo, sans repères. */
+function vignette(s) {
+  const m = rendre(s, 100), t = canvas(112, 144); t.getContext('2d').drawImage(m.canvas, 0, 0, 112, 144); free(m.canvas);
+  return t;
+}
+/** Fond changé : les vignettes des autres personnes (mode trio) sont refaites avec le nouveau fond. */
+let fondVignettes = '';
+function vignettesFond() {
+  const k = fondHex(); if (k === fondVignettes) return;
+  const avant = fondVignettes; fondVignettes = k; if (!avant) return;
+  let change = false;
+  for (const s of actifs()) if (s.status === 'ok' && s.i !== sel) {
+    s.thumb = vignette(s); change = true;
+  }
+  if (change) renderSlots();
 }
 
 function dessinerApercu(s) {
@@ -490,7 +515,7 @@ function etatControles(s) {
   if (!s.mesure) { const m = rendre(s, 150, { mesurer: true }); free(m.canvas); m.canvas = null; s.mesure = m; }
   const m = s.mesure;
   return controles({ nbVisages: s.nb, r: rep(s), c: m.c, blend: s.blend, lumPeau: m.lumPeau, brule: m.brule, bouche: m.bouche, asym: m.asym,
-    nettete: s.nettete, fond: FONDS[G.fond].hex, cheveuxCoupes: m.cheveuxCoupes, basVide: m.basVide, hautCoupe: s.hautCoupe });
+    nettete: s.nettete, fond: fondHex(), cheveuxCoupes: m.cheveuxCoupes, basVide: m.basVide, hautCoupe: s.hautCoupe });
 }
 
 function refreshConformite() {
@@ -557,7 +582,7 @@ function construirePlanche(dpi) {
 /** Rendu d'une photo ; mis en cache à la résolution de la planche affichée (évite de tout refaire à chaque mouvement de curseur). */
 function rendu(s, dpi) {
   if (dpi !== NORME.dpiPlanche) return rendre(s, dpi).canvas;
-  const key = JSON.stringify([s.ver, s.adj, G.fond]);
+  const key = JSON.stringify([s.ver, s.adj, G.fond, G.fonce]);
   if (s.rc?.key !== key) { free(s.rc?.canvas); s.rc = { key, canvas: rendre(s, dpi).canvas }; }
   return s.rc.canvas;
 }
@@ -566,7 +591,7 @@ function dessinerPlanche() {
   const any = actifs().some(s => s.status === 'ok');
   $('empty').hidden = any;
   const cv = $('planche');
-  const key = JSON.stringify([G.mode, G.fond, actifs().map(s => [s.status, s.ver, s.adj])]);
+  const key = JSON.stringify([G.mode, G.fond, G.fonce, actifs().map(s => [s.status, s.ver, s.adj])]);
   if (key === plancheKey) return;
   plancheKey = key;
   if (!any) { cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); return; }

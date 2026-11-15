@@ -25,7 +25,7 @@ l'Intérieur sur la norme ISO/IEC 19794-5:2005.
 | Visage de 32 à 36 mm, du menton au sommet du crâne hors cheveux | Cadrage automatique à 34 mm, milieu de la plage (réglable de 32,5 à 35,5). Crâne dégagé (rasé, chauve) : sommet **mesuré** sur le détourage grâce à la segmentation des cheveux. Sinon, sommet **estimé** sous les cheveux (yeux → crâne = 0,85 × yeux → menton, calibré sur des crânes dégagés), borné par le haut réel de la tête, et signalé « à vérifier sur l'aperçu ». Le curseur **Sommet du crâne** permet de placer ce sommet à la main (la photo se recale à la taille réglée) ; le contrôle reste « à vérifier », l'alignement étant fait à l'œil. **Ovale de contrôle** : gabarit comme en cabine, le visage (menton → sommet du crâne) doit tenir entre l'ovale de 32 mm et celui de 36 mm |
 | Yeux dans la « zone des yeux » (50 à 70 % de la hauteur depuis le bas) | Vérifié ; zone affichée sur l'aperçu |
 | Tête droite, de face | Inclinaison corrigée automatiquement (contrôlée au-delà de 8°) ; rotation latérale contrôlée |
-| Fond uni, clair, blanc interdit | Sujet détouré, fond remplacé par gris clair, bleu clair ou gris perle (contrôle : clair mais jamais blanc) |
+| Fond uni, clair, blanc interdit | Sujet détouré, fond remplacé par une couleur unie : gris clair, bleu clair ou gris perle, que l'on peut foncer en restant clair (seuil de l'outil, avec une marge pour la compression JPEG) (contrôle : clair mais jamais blanc) |
 | Ni sur- ni sous-exposée, sans ombre | Exposition mesurée sur le front et les joues, corrigée si hors plage ; écart d'éclairage entre les joues signalé |
 | Nette | Netteté mesurée (laplacien) |
 | Expression neutre, bouche fermée, yeux ouverts | Contrôlés (expressions du visage détectées par MediaPipe) |

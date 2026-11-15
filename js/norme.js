@@ -206,6 +206,25 @@ export const FONDS = {
   'gris-perle': { nom: 'Gris perle', hex: '#C9CDD2' },
 };
 
+/**
+ * Couleur de fond foncée de `fonce` (0 = couleur d'origine, 1 = le plus foncé admis par l'outil :
+ * luminance au-dessus de SEUILS.fondLumMin, avec une marge pour la compression JPEG).
+ * La teinte est conservée.
+ */
+export function couleurFond(hex, fonce = 0) {
+  const n = parseInt(hex.slice(1), 16), rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const f = Math.max(0, Math.min(1, +fonce || 0));
+  if (!f) return hex.toUpperCase();
+  const teinte = k => '#' + rgb.map(v => Math.round(v * k).toString(16).padStart(2, '0')).join('').toUpperCase();
+  // facteur minimal (dichotomie) gardant le fond conforme, avec une petite marge
+  let lo = 0.3, hi = 1;
+  for (let i = 0; i < 16; i++) { const m = (lo + hi) / 2; if (fondConforme(teinte(m)).L >= SEUILS.fondLumMin + 0.03) hi = m; else lo = m; }
+  return teinte(1 - f * (1 - hi));
+}
+
+/** Réglage « foncer le fond » mémorisé : nombre entre 0 et 1, au pas du curseur (5 %). */
+export const normaliserFonce = v => Math.round(Math.max(0, Math.min(1, Number.isFinite(+v) ? +v : 0)) * 20) / 20;
+
 export function luminance(r, g, b) {
   const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);

@@ -35,7 +35,8 @@
       </div>
       <div id="slots" class="slots"></div>
       <div class="row"><label for="fond">Fond</label><select id="fond"></select><span class="swatch" id="fondSw"></span></div>
-      <p class="hint">Fond uni et clair : le blanc est interdit par la norme.</p>
+      <div class="row"><label for="fonce">Foncer le fond</label><input type="range" id="fonce" min="0" max="1" step="0.05" aria-describedby="fonceAide"><output id="fonceV" for="fonce"></output></div>
+      <p class="hint" id="fonceAide">Fond uni et clair : le blanc est interdit par la norme. Le fond est toujours une couleur unie (le fond d'origine est remplacé) ; à 100 %, il reste assez clair pour être conforme.</p>
     </section>
 
     <section class="card" id="reglages" hidden>

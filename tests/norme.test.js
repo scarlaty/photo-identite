@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NORME, SEUILS, LM, reperes, cadre, mesures, controles, taillePhoto, fondConforme, FONDS, resolution, lacet, borneCrane, sommetCrane, avecCrane, gabaritOvale } from '../js/norme.js';
+import { NORME, SEUILS, LM, reperes, cadre, mesures, controles, taillePhoto, fondConforme, FONDS, resolution, lacet, borneCrane, sommetCrane, avecCrane, gabaritOvale, couleurFond, normaliserFonce } from '../js/norme.js';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
 
@@ -192,4 +192,22 @@ test('ovale de contrôle centré sur le visage réglé', () => {
     assert.ok(e.cy - e.ry <= NORME.crane_haut_mm && NORME.crane_haut_mm <= i.cy - i.ry, `haut ${v}`);
     assert.ok(i.cy + i.ry <= NORME.crane_haut_mm + v && NORME.crane_haut_mm + v <= e.cy + e.ry, `bas ${v}`);
   }
+});
+
+test('foncer le fond : teinte gardée, toujours conforme, plus sombre', () => {
+  for (const { hex } of Object.values(FONDS)) {
+    assert.equal(couleurFond(hex, 0), hex.toUpperCase());
+    const max = couleurFond(hex, 1), mi = couleurFond(hex, 0.5);
+    assert.ok(fondConforme(max).ok, `${hex} → ${max}`);
+    assert.ok(fondConforme(max).L < fondConforme(mi).L && fondConforme(mi).L < fondConforme(hex).L);
+    assert.ok(fondConforme(max).L < fondConforme(hex).L - 0.06, `${hex} : écart trop faible`);
+  }
+  assert.equal(couleurFond('#DADDE0', 5), couleurFond('#DADDE0', 1));   // borné
+  for (const { hex } of Object.values(FONDS)) assert.ok(fondConforme(couleurFond(hex, 1)).L >= SEUILS.fondLumMin + 0.025);   // marge JPEG
+});
+
+test('réglage « foncer le fond » mémorisé : valeurs invalides ramenées', () => {
+  assert.equal(normaliserFonce('abc'), 0); assert.equal(normaliserFonce(NaN), 0); assert.equal(normaliserFonce(null), 0);
+  assert.equal(normaliserFonce(7), 1); assert.equal(normaliserFonce(-1), 0); assert.equal(normaliserFonce(0.33), 0.35); assert.equal(normaliserFonce('0.5'), 0.5);
+  for (const { hex } of Object.values(FONDS)) assert.ok(fondConforme(hex).ok, hex);   // couleurs de départ conformes
 });
