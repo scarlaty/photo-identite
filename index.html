@@ -41,6 +41,8 @@
     <section class="card" id="reglages" hidden>
       <h2><b>2</b>Réglages de <span id="regNom">la photo</span></h2>
       <div class="row"><label for="visage">Visage</label><input type="range" id="visage" min="32.5" max="35.5" step="0.1"><output id="visageV"></output></div>
+      <div class="row"><label for="crane">Sommet du crâne</label><input type="range" id="crane" min="-3" max="3" step="0.1" aria-describedby="craneAide"><output id="craneV"></output></div>
+      <p class="hint" id="craneAide">Sous les cheveux, le sommet du crâne est estimé : déplace ce curseur jusqu'à ce que le trait pointillé du haut (repères affichés) touche le sommet du crâne. La photo se recale pour garder la taille du visage.</p>
       <div class="row"><label for="dx">Gauche/droite</label><input type="range" id="dx" min="-3" max="3" step="0.1"><output id="dxV"></output></div>
       <div class="row"><label for="dy">Haut/bas</label><input type="range" id="dy" min="-2" max="2" step="0.1"><output id="dyV"></output></div>
       <hr>
@@ -61,6 +63,7 @@
       <div class="ed-pic">
         <canvas id="apercu" width="350" height="450" aria-label="Aperçu de la photo 35×45"></canvas>
         <label class="check small"><input type="checkbox" id="guides" checked> Afficher les repères de la norme</label>
+        <label class="check small"><input type="checkbox" id="ovale"> Ovale de contrôle (comme en cabine) : le visage, du menton au sommet du crâne, doit tenir entre les deux ovales</label>
       </div>
       <div class="ed-checks">
         <h3>Contrôle automatique</h3>

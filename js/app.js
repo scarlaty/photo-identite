@@ -1,6 +1,6 @@
 import { RES } from './models.js';
 import { analyserVisage, segmenterCheveux } from './face.js';
-import { NORME, FONDS, A_COCHER, reperes, cadre, mesures, controles, taillePhoto, zonesPeau, sommetCrane } from './norme.js';
+import { NORME, FONDS, A_COCHER, reperes, cadre, mesures, controles, taillePhoto, zonesPeau, sommetCrane, avecCrane, gabaritOvale } from './norme.js';
 import { appliquer, lumZone, ecretage, nettete, expositionAuto } from './retouche.js';
 import { planche, jpegDpi } from './planche.js';
 import { cameraDisponible, ouvrirCamera } from './camera.js';
@@ -8,14 +8,15 @@ import { cameraDisponible, ouvrirCamera } from './camera.js';
 const $ = id => document.getElementById(id);
 const MAX_SIDE = 4000;     // côté max de la photo source conservée
 const MAX_REGION = 2400;   // côté max de la zone détourée (la photo 35×45 à 600 dpi fait 827×1063)
-const ADJ0 = { visage: NORME.visageCibleMm, dx: 0, dy: 0, exposition: 0, contraste: 0, ombres: 0, temperature: 0, saturation: 0 };
+const ADJ0 = { visage: NORME.visageCibleMm, crane: 0, dx: 0, dy: 0, exposition: 0, contraste: 0, ombres: 0, temperature: 0, saturation: 0 };
 
 /* ---------------- réglages globaux ---------------- */
 const STORE = 'photo-identite:v1';
-const G = { mode: 'identiques', fond: 'gris-clair' };
+const G = { mode: 'identiques', fond: 'gris-clair', ovale: false };
 try { Object.assign(G, JSON.parse(localStorage.getItem(STORE) || '{}')); } catch { /* stockage indisponible */ }
 if (!['identiques', 'trio'].includes(G.mode)) G.mode = 'identiques';
 if (!FONDS[G.fond]) G.fond = 'gris-clair';
+G.ovale = G.ovale === true;
 const persist = () => { try { localStorage.setItem(STORE, JSON.stringify(G)); } catch { /* idem */ } };
 
 /* ---------------- workers (détourage) ---------------- */
@@ -180,7 +181,8 @@ async function analyser(s, tok) {
     const cheveux = await cheveuxTete(src, r);
     if (s.tok !== tok) return;
     // Zone à détourer : le plus grand cadre possible (visage minimal, décalages maximaux), redressé
-    const c = cadre(r, { visageMm: 32, dx: 0, dy: 0 });
+    // (sommet du crâne relevé au maximum à la main : cadre plus grand, la zone doit le couvrir)
+    const c = cadre(avecCrane(r, 3, 32), { visageMm: 32, dx: 0, dy: 0 });
     const pad = 4 * c.pxParMm;  // marge pour les décalages (±3 mm) et l'arrondi
     const a = c.angle * Math.PI / 180, ca = Math.cos(-a), sa = Math.sin(-a);
     const xs = [], ys = [];
@@ -345,13 +347,15 @@ function mesureNettete(src, r) {
 }
 
 /* ---------------- rendu d'une photo 35×45 ---------------- */
+/** Repères de la photo, sommet du crâne corrigé à la main s'il y a lieu. */
+const rep = s => avecCrane(s.r, s.adj.crane, s.adj.visage);
 /**
  * Photo 35×45 à `dpi`. Renvoie { canvas, lumPeau, asym, rMoy, bMoy, c }.
  * Les réglages de lumière ne touchent que le sujet ; le fond est une couleur unie.
  */
 function rendre(s, dpi, { mesurer = false, brut = false } = {}) {
   const [OW, OH] = taillePhoto(dpi);
-  const c = cadre(s.r, { visageMm: s.adj.visage, dx: s.adj.dx, dy: s.adj.dy });
+  const r = rep(s), c = cadre(r, { visageMm: s.adj.visage, dx: s.adj.dx, dy: s.adj.dy });
   const k = OW / c.w;
   const sujet = canvas(OW, OH), sx = sujet.getContext('2d', { willReadFrequently: true });
   sx.imageSmoothingQuality = 'high';
@@ -364,7 +368,7 @@ function rendre(s, dpi, { mesurer = false, brut = false } = {}) {
   const out = { c, canvas: null };
   if (mesurer) {
     // front + haut des joues (repère redressé : les yeux sont le centre de rotation)
-    const z = zonesPeau(s.r), X = x => (x - c.x) * k, Y = y => (y - c.y) * k;
+    const z = zonesPeau(r), X = x => (x - c.x) * k, Y = y => (y - c.y) * k;
     const L = ([x0, y0, x1, y1]) => lumZone(img.data, OW, OH, X(x0), Y(y0), X(x1), Y(y1));
     const lf = L(z.front), lD = L(z.joueD), lG = L(z.joueG);
     const vals = [lf, lD, lG].filter(v => v != null);
@@ -398,15 +402,17 @@ function autoReglages(s) {
 }
 
 /* ---------------- interface ---------------- */
-const SLIDERS = { visage: v => `${v.toFixed(1)} mm`, dx: v => `${v.toFixed(1)} mm`, dy: v => `${v.toFixed(1)} mm`,
+const SLIDERS = { visage: v => `${v.toFixed(1)} mm`, crane: v => (v ? `${v > 0 ? '+' : ''}${v.toFixed(1)} mm` : 'auto'), dx: v => `${v.toFixed(1)} mm`, dy: v => `${v.toFixed(1)} mm`,
   exposition: v => (v > 0 ? '+' : '') + v.toFixed(2), contraste: v => (v > 0 ? '+' : '') + v.toFixed(2), ombres: v => v.toFixed(2),
   temperature: v => (v > 0 ? '+' : '') + v.toFixed(2), saturation: v => (v > 0 ? '+' : '') + v.toFixed(2) };
 for (const id of Object.keys(SLIDERS)) {
   $(id).addEventListener('input', e => { const s = slots[sel]; if (s.status !== 'ok') return; s.adj[id] = +e.target.value; schedule(); });
 }
-$('auto').onclick = () => { const s = slots[sel]; if (s.status !== 'ok') return; const keep = { visage: s.adj.visage, dx: s.adj.dx, dy: s.adj.dy }; s.adj = { ...ADJ0, ...keep }; autoReglages(s); refresh(); };
+$('auto').onclick = () => { const s = slots[sel]; if (s.status !== 'ok') return; const keep = { visage: s.adj.visage, crane: s.adj.crane, dx: s.adj.dx, dy: s.adj.dy }; s.adj = { ...ADJ0, ...keep }; autoReglages(s); refresh(); };
 $('raz').onclick = () => { const s = slots[sel]; if (s.status !== 'ok') return; s.adj = { ...ADJ0 }; refresh(); };
 $('guides').onchange = () => refresh();
+$('ovale').checked = G.ovale;
+$('ovale').onchange = e => { G.ovale = e.target.checked; persist(); refresh(); };
 for (const [k, f] of Object.entries(FONDS)) $('fond').add(new Option(f.nom, k));
 $('fond').onchange = e => { G.fond = e.target.value; persist(); refresh(); };
 $('mode').addEventListener('click', e => {
@@ -441,7 +447,7 @@ function dessinerApercu(s) {
   const t = canvas(112, 144); t.getContext('2d').drawImage(cv, 0, 0, 112, 144);  // vignette sans repères
   s.thumb = t;
   if ($('guides').checked) {
-    const mm = cv.width / NORME.largeurMm, me = mesures(s.r, m.c);
+    const mm = cv.width / NORME.largeurMm, r = rep(s), me = mesures(r, m.c);
     // zone des yeux (50 à 70 % de la hauteur depuis le bas)
     x.fillStyle = 'rgba(30,140,80,.16)';
     x.fillRect(0, (1 - NORME.yeuxBasMax) * NORME.hauteurMm * mm, cv.width, (NORME.yeuxBasMax - NORME.yeuxBasMin) * NORME.hauteurMm * mm);
@@ -453,20 +459,37 @@ function dessinerApercu(s) {
     x.setLineDash([]);
     x.beginPath(); x.moveTo(cv.width - 14, me.craneMm * mm); x.lineTo(cv.width - 14, me.mentonMm * mm); x.stroke();
     x.save(); x.translate(cv.width - 18, (me.craneMm + me.mentonMm) / 2 * mm); x.rotate(-Math.PI / 2);
-    x.fillStyle = x.strokeStyle; x.textAlign = 'center'; x.fillText(`${s.r.crane === 'mesure' ? '' : '≈ '}${me.visageMm.toFixed(1)} mm`, 0, 0); x.restore();
+    x.fillStyle = x.strokeStyle; x.textAlign = 'center'; x.fillText(`${r.crane === 'mesure' ? '' : '≈ '}${me.visageMm.toFixed(1)} mm`, 0, 0); x.restore();
     // axe vertical
     x.strokeStyle = 'rgba(30,58,95,.35)'; x.setLineDash([2, 4]);
     x.beginPath(); x.moveTo(cv.width / 2, 0); x.lineTo(cv.width / 2, cv.height); x.stroke(); x.setLineDash([]);
   }
+  if (G.ovale) dessinerOvale(x, cv.width / NORME.largeurMm, s.adj.visage);
   const slotCanvas = $('slots').children[actifs().indexOf(s)]?.querySelector('canvas');
   if (slotCanvas) slotCanvas.getContext('2d').drawImage(t, 0, 0, 56, 72); else renderSlots();
+}
+
+/**
+ * Gabarit ovale fixe, comme sur l'écran d'une cabine : le visage (menton → sommet du crâne)
+ * doit tenir dans l'anneau entre les deux ovales. Indépendant de la détection : sert à valider à l'œil.
+ */
+function dessinerOvale(x, mm, visageMm) {
+  const { interieur: i, exterieur: e } = gabaritOvale(visageMm);
+  const ell = (o, sens) => x.ellipse(o.cx * mm, o.cy * mm, o.rx * mm, o.ry * mm, 0, 0, Math.PI * 2, sens);
+  x.save();
+  x.fillStyle = 'rgba(40,120,220,.14)';
+  x.beginPath(); ell(e, false); ell(i, true); x.fill('evenodd');      // anneau 32–36 mm
+  x.lineWidth = 1.5; x.strokeStyle = 'rgba(30,90,180,.85)';
+  x.beginPath(); ell(e, false); x.stroke();
+  x.setLineDash([4, 3]); x.beginPath(); ell(i, false); x.stroke();
+  x.restore();
 }
 
 function etatControles(s) {
   if (s.status !== 'ok') return null;
   if (!s.mesure) { const m = rendre(s, 150, { mesurer: true }); free(m.canvas); m.canvas = null; s.mesure = m; }
   const m = s.mesure;
-  return controles({ nbVisages: s.nb, r: s.r, c: m.c, blend: s.blend, lumPeau: m.lumPeau, brule: m.brule, bouche: m.bouche, asym: m.asym,
+  return controles({ nbVisages: s.nb, r: rep(s), c: m.c, blend: s.blend, lumPeau: m.lumPeau, brule: m.brule, bouche: m.bouche, asym: m.asym,
     nettete: s.nettete, fond: FONDS[G.fond].hex, cheveuxCoupes: m.cheveuxCoupes, basVide: m.basVide, hautCoupe: s.hautCoupe });
 }
 

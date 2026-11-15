@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NORME, SEUILS, LM, reperes, cadre, mesures, controles, taillePhoto, fondConforme, FONDS, resolution, lacet, borneCrane, sommetCrane } from '../js/norme.js';
+import { NORME, SEUILS, LM, reperes, cadre, mesures, controles, taillePhoto, fondConforme, FONDS, resolution, lacet, borneCrane, sommetCrane, avecCrane, gabaritOvale } from '../js/norme.js';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
 
@@ -148,4 +148,48 @@ test('sommet du crâne : mesuré si le haut de la tête est sans cheveux, estim�
   r = mk(); assert.equal(sommetCrane(r, 270, 0.05, false), 'estime');  // bonnet ou foulard : pas de mesure
   r = mk(); assert.equal(sommetCrane(r, 600, 0.05), 'estime');  // mesure aberrante ignorée
   assert.equal(controles({ nbVisages: 1, r, c: cadre(r) }).find(x => x.id === 'taille-visage').ok, null);
+});
+
+test('sommet du crâne placé à la main : visage recalé', () => {
+  const r = { yeux: { x: 500, y: 500 }, yeuxMenton: 200, yeuxCrane: 170, roulis: 0, get hauteurTete() { return this.yeuxMenton + this.yeuxCrane; } };
+  assert.equal(avecCrane(r, 0), r);
+  const m = avecCrane(r, 2, 34);
+  assert.equal(m.crane, 'manuel');
+  close(m.yeuxCrane, 170 + 2 * 370 / 32);
+  close(m.hauteurTete, 200 + m.yeuxCrane);
+  assert.equal(r.yeuxCrane, 170);                       // repères d'origine intacts
+  // le cadre remet le visage à 34 mm : le sommet corrigé est à 4 mm du haut
+  const c = cadre(m, { visageMm: 34 }), me = mesures(m, c);
+  close(me.visageMm, 34); close(me.craneMm, NORME.crane_haut_mm);
+  // crâne abaissé : jamais sous les yeux
+  assert.ok(avecCrane(r, -50, 34).yeuxCrane >= 0.3 * 200);
+});
+
+test('ovale de contrôle : anneau 32–36 mm centré sur le cadrage automatique', () => {
+  const { interieur: i, exterieur: e } = gabaritOvale();
+  close(i.ry * 2, 32); close(e.ry * 2, 36);
+  close(i.cx, 17.5); close(i.cy, e.cy);
+  close(i.cy - i.ry, NORME.crane_haut_mm + 1);         // sommet de l'ovale intérieur à 5 mm du haut
+  close(e.cy + e.ry, NORME.crane_haut_mm + 34 + 1);    // bas de l'ovale extérieur à 39 mm (menton auto à 38)
+  assert.ok(e.cx + e.rx < NORME.largeurMm && e.cx - e.rx > 0);
+});
+
+test('sommet placé à la main : le trait se décale de la valeur affichée, contrôle jamais vert', () => {
+  const r = { yeux: { x: 500, y: 500 }, nez: { x: 500, y: 600 }, joueD: { x: 380, y: 560 }, joueG: { x: 620, y: 560 }, yeuxMenton: 200, yeuxCrane: 170, roulis: 0, get hauteurTete() { return this.yeuxMenton + this.yeuxCrane; } };
+  // l'ancien sommet estimé se retrouve exactement 2 mm sous le trait du haut, après recalage
+  const m = avecCrane(r, 2, 34), c = cadre(m, { visageMm: 34 });
+  close((r.yeux.y - r.yeuxCrane - c.y) / c.pxParMm, NORME.crane_haut_mm + 2);
+  const base = { nbVisages: 1, c, r: m };
+  const t = controles(base).find(x => x.id === 'taille-visage');
+  assert.equal(t.ok, null);
+  assert.match(t.detail, /à la main/);
+});
+
+test('ovale de contrôle centré sur le visage réglé', () => {
+  for (const v of [32.5, 34, 35.5]) {
+    const { interieur: i, exterieur: e } = gabaritOvale(v);
+    // sommet (4 mm) et menton (4 + v) du cadrage tombent dans l'anneau
+    assert.ok(e.cy - e.ry <= NORME.crane_haut_mm && NORME.crane_haut_mm <= i.cy - i.ry, `haut ${v}`);
+    assert.ok(i.cy + i.ry <= NORME.crane_haut_mm + v && NORME.crane_haut_mm + v <= e.cy + e.ry, `bas ${v}`);
+  }
 });

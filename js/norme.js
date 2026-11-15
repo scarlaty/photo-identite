@@ -97,6 +97,35 @@ export function sommetCrane(r, yeuxHaut, cheveuxHaut, peauHaut = true) {
 }
 
 /**
+ * Sommet du crâne placé à la main : `craneMm` = décalage (mm sur la photo finale, + = plus haut)
+ * du trait du sommet par rapport à l'estimation automatique, pour un visage réglé à `visageMm`.
+ * Renvoie des repères dérivés (r intact) ; crane = 'manuel' si décalé.
+ */
+export function avecCrane(r, craneMm = 0, visageMm = NORME.visageCibleMm) {
+  if (!craneMm) return r;
+  // décalage d (px source) tel que le trait bouge de craneMm sur la photo recalée à visageMm :
+  // d · visage / (H + d) = craneMm  →  d = craneMm · H / (visage − craneMm)
+  const d = craneMm * r.hauteurTete / (visageMm - craneMm);
+  const o = Object.create(r);                 // getters (hauteurTete) recalculés avec la nouvelle valeur
+  o.yeuxCrane = Math.max(0.3 * r.yeuxMenton, r.yeuxCrane + d);
+  o.crane = 'manuel';
+  return o;
+}
+
+/**
+ * Gabarit ovale « comme en cabine » sur la photo 35×45 (mm) : le visage, du menton au sommet du
+ * crâne, doit tenir entre l'ovale intérieur (32 mm de haut) et l'ovale extérieur (36 mm).
+ * Centré sur le visage tel que cadré (`visageMm`) : sert à juger à l'œil le vrai sommet du crâne
+ * et le vrai menton, indépendamment de l'estimation.
+ */
+export function gabaritOvale(visageMm = NORME.visageCibleMm) {
+  const cy = NORME.crane_haut_mm + visageMm / 2, cx = NORME.largeurMm / 2;
+  // largeur ≈ 2/3 de la hauteur menton → crâne (ordre de grandeur anthropométrique, oreilles exclues)
+  const ellipse = h => ({ cx, cy, rx: h / 3, ry: h / 2 });
+  return { interieur: ellipse(NORME.visageMinMm), exterieur: ellipse(NORME.visageMaxMm) };
+}
+
+/**
  * Cadre 35×45 dans l'image source, après redressement du roulis.
  * Renvoie le centre de rotation, l'angle à appliquer et le rectangle (dans le repère redressé).
  * `reglages` : { zoom, dx, dy } retouches manuelles (dx, dy en mm sur la photo finale).
@@ -207,6 +236,9 @@ export function controles(m) {
   const dansPlage = me.visageMm >= NORME.visageMinMm && me.visageMm <= NORME.visageMaxMm;
   if (m.r.crane === 'mesure') add('taille-visage', dansPlage, 'Visage de 32 à 36 mm (menton → sommet du crâne)',
     `${me.visageMm.toFixed(1)} mm (crâne dégagé : sommet mesuré)`);
+  // placé à la main : dépend de l'alignement fait à l'œil, donc jamais un « vert » automatique
+  else if (m.r.crane === 'manuel') add('taille-visage', dansPlage ? null : false, 'Visage de 32 à 36 mm (menton → sommet du crâne)',
+    `réglé à ${me.visageMm.toFixed(1)} mm, sommet du crâne placé à la main : vérifie qu'il touche bien le trait du haut (et le visage entre les deux ovales)`);
   else add('taille-visage', dansPlage ? null : false, 'Visage de 32 à 36 mm (menton → sommet du crâne)',
     `réglé à ${me.visageMm.toFixed(1)} mm ; sommet du crâne estimé sous les cheveux${m.r.crane === 'borne' ? ' (borné par le haut de la tête)' : ''} : vérifie sur l'aperçu que le trait du haut passe au sommet du crâne`);
   if (m.hautCoupe != null) add('tete-entiere', !m.hautCoupe, 'Tête entière sur la photo d\u2019origine',
